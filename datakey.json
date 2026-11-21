@@ -1,0 +1,262 @@
+{
+    "owner_id": 7504960222,
+    "users": {
+        "7504960222": {
+            "username": "Admin",
+            "first_name": "Chủ Bot",
+            "join_date": "2026-11-21T15:53:19.907945+07:00",
+            "key_expires": null,
+            "balance": 888888,
+            "analysis_count": 15,
+            "verified_3box": true,
+            "is_owner": true
+        },
+        "7887884775": {
+            "username": "cskhngocchi",
+            "first_name": "𝑵𝒈𝒐̣𝒄 𝑪𝒉𝒊́",
+            "join_date": "2026-11-21T15:56:36.052495+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": false
+        },
+        "7955821632": {
+            "username": "BKH66667777",
+            "first_name": "BKH-DSNWHISH",
+            "join_date": "2026-11-21T16:05:38.113597+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": true
+        },
+        "7549551030": {
+            "username": "vanminh2603",
+            "first_name": "me ️",
+            "join_date": "2026-11-21T16:05:52.037845+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": true
+        },
+        "9260904920": {
+            "username": "No Username",
+            "first_name": "Hai dang",
+            "join_date": "2026-11-21T19:20:10.186989+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": true
+        },
+        "8940794012": {
+            "username": "nguyentien2401",
+            "first_name": "TIẾN",
+            "join_date": "2026-11-21T19:26:11.311118+07:00",
+            "key_expires": "2026-11-21T22:32:11.256112+07:00",
+            "balance": 0,
+            "analysis_count": 4,
+            "verified_3box": true
+        },
+        "6328200795": {
+            "username": "tomzz28",
+            "first_name": "Hoàng Minh",
+            "join_date": "2026-11-21T19:32:13.308891+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": true
+        },
+        "8116161058": {
+            "username": "FernzMod",
+            "first_name": "Fernz",
+            "join_date": "2026-11-21T19:32:17.470435+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": true
+        },
+        "8643618048": {
+            "username": "No Username",
+            "first_name": "Thế",
+            "join_date": "2026-11-21T19:32:25.304383+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": true
+        },
+        "8946937421": {
+            "username": "No Username",
+            "first_name": "gg sớm",
+            "join_date": "2026-11-21T19:36:19.299227+07:00",
+            "key_expires": null,
+            "balance": 0,
+            "analysis_count": 0,
+            "verified_3box": false
+        }
+    },
+    "keys": {
+        "FV98U5ZY475TD0V": {
+            "days": 0,
+            "hours": 3,
+            "used": true,
+            "created_at": "2026-11-21T19:31:43.553702+07:00",
+            "used_by": "8940794012",
+            "free_key": true,
+            "claimed_by": "8940794012",
+            "used_at": "2026-11-21T19:32:11.256112+07:00"
+        }
+    },
+    "history": [],
+    "deposits": {},
+    "giftcodes": {},
+    "game_history": {
+        "lc79_md5": [
+            {
+                "phien": "7160485",
+                "ket_qua": "Xỉu",
+                "pred": null,
+                "status": null,
+                "time": "2026-11-21T15:57:08.174273+07:00"
+            },
+            {
+                "phien": "7160486",
+                "ket_qua": "Xỉu",
+                "pred": "XỈU",
+                "status": "ĐÚNG",
+                "time": "2026-11-21T15:57:37.754638+07:00"
+            },
+            {
+                "phien": "7160487",
+                "ket_qua": "Tài",
+                "pred": "XỈU",
+                "status": "SAI",
+                "time": "2026-11-21T15:57:38.982758+07:00"
+            },
+            {
+                "phien": "7160488",
+                "ket_qua": "Tài",
+                "pred": "XỈU",
+                "status": "SAI",
+                "time": "2026-11-21T15:58:32.317782+07:00"
+            },
+            {
+                "phien": "7160489",
+                "ket_qua": "Tài",
+                "pred": "TÀI",
+                "status": "ĐÚNG",
+                "time": "2026-11-21T15:59:21.854457+07:00"
+            },
+            {
+                "phien": "7160490",
+                "ket_qua": "Xỉu",
+                "pred": "TÀI",
+                "status": "SAI",
+                "time": "2026-11-21T16:00:15.334538+07:00"
+            },
+            {
+                "phien": "7160491",
+                "ket_qua": "Tài",
+                "pred": "TÀI",
+                "status": "ĐÚNG",
+                "time": "2026-11-21T16:01:04.482143+07:00"
+            },
+            {
+                "phien": "7160492",
+                "ket_qua": "Tài",
+                "pred": "XỈU",
+                "status": "SAI",
+                "time": "2026-11-21T16:01:54.099106+07:00"
+            },
+            {
+                "phien": "7160493",
+                "ket_qua": "Tài",
+                "pred": "TÀI",
+                "status": "ĐÚNG",
+                "time": "2026-11-21T16:02:43.212722+07:00"
+            },
+            {
+                "phien": "7160494",
+                "ket_qua": "Tài",
+                "pred": "XỈU",
+                "status": "SAI",
+                "time": "2026-11-21T16:03:36.482334+07:00"
+            },
+            {
+                "phien": "7160495",
+                "ket_qua": "Xỉu",
+                "pred": "TÀI",
+                "status": "SAI",
+                "time": "2026-11-21T16:04:25.517566+07:00"
+            },
+            {
+                "phien": "7160677",
+                "ket_qua": "Tài",
+                "pred": null,
+                "status": null,
+                "time": "2026-11-21T19:17:37.783715+07:00"
+            }
+        ],
+        "sun_tx": [
+            {
+                "phien": "3334942",
+                "ket_qua": "Xỉu",
+                "pred": null,
+                "status": null,
+                "time": "2026-11-21T19:32:51.139717+07:00"
+            }
+        ]
+    },
+    "deposit_requests": {
+        "1": {
+            "user_id": "7504960222",
+            "username": "tungocbo",
+            "first_name": "Vô Danh",
+            "status": "approved",
+            "created_at": "2026-11-21T15:54:30.709299+07:00",
+            "approved_at": "2026-11-21T15:54:48.430574+07:00",
+            "approved_amount": 888888,
+            "user_confirmed_at": "2026-11-21T15:54:34.538305+07:00",
+            "reviewed_by": 7504960222
+        },
+        "2": {
+            "user_id": "7549551030",
+            "username": "vanminh2603",
+            "first_name": "me ️",
+            "status": "pending",
+            "created_at": "2026-11-21T16:06:22.872555+07:00",
+            "approved_at": null,
+            "approved_amount": null
+        }
+    },
+    "free_key_requests": {
+        "1": {
+            "user_id": "8940794012",
+            "username": "nguyentien2401",
+            "first_name": "TIẾN",
+            "photo_file_ids": [
+                "AgACAgUAAxkBAAIGC2sBjq5yTKJMCMKcCuCdv9BFbjuCAAJPEmsbUp4QVFfTwiB92AV9AQADAgADeQADPQQ",
+                "AgACAgUAAxkBAAIGDGsBjq6KLDoNzrJgc4lpu5_kr_NEAAJQEmsbUp4QVGSIzAeiwXZ5AQADAgADeQADPQQ",
+                "AgACAgUAAxkBAAIGDWsBjq7-FaKNI9S6mZnK8EkiJ6LkAAJREmsbUp4QVCFe3jd02OWuAQADAgADeQADPQQ"
+            ],
+            "photo_file_id": "AgACAgUAAxkBAAIGC2sBjq5yTKJMCMKcCuCdv9BFbjuCAAJPEmsbUp4QVFfTwiB92AV9AQADAgADeQADPQQ",
+            "note": "",
+            "status": "approved",
+            "created_at": "2026-11-21T19:29:37.566776+07:00",
+            "issued_key": "FV98U5ZY475TD0V",
+            "reviewed_at": "2026-11-21T19:31:43.553702+07:00",
+            "reviewed_by": 7504960222
+        }
+    },
+    "sub_admins": [
+        7504960222
+    ],
+    "free_key_claims": {
+        "8940794012": "2026-11-21T19:31:43.553702+07:00"
+    },
+    "settings": {
+        "last_user_id": 0,
+        "last_key_id": 0,
+        "last_deposit_id": 2,
+        "last_giftcode_id": 0,
+        "last_freekey_id": 1
+    }
+}
