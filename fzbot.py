@@ -1,3 +1,4 @@
+# language: Python, file: fzbot.py, target: Python 3.10+ / python-telegram-bot v20+
 import logging
 import asyncio
 import httpx
@@ -40,21 +41,19 @@ REQUIRED_BOXES = [
     {"name": "Kênh Check Bill FZ Team", "url": CHANNEL_BILL, "chat_id": None},
 ]
 
+# Cập nhật danh sách API theo apitiendat.txt
 API_URLS = {
-    "sun_tx": "http://180.93.114.115:3000/sunwin/taixiu",
-    "sun_sb": "http://163.61.182.4:7777/sun/sicbo",
-    "hit_tx": "http://180.93.114.115:3000/hitclub/taixiu",
-    "hit_md5": "http://180.93.114.115:3000/hitclub/taixiumd5",
-    "hit_sb": "http://163.61.182.4:7777/hit/sicbo",
-    "b52_tx": "http://180.93.114.115:3000/b52/taixiu",
-    "b52_md5": "http://180.93.114.115:3000/b52/taixiumd5",
-    "b52_sb": "http://180.93.114.115:3000/b52/sicbo",
-    "betvip_tx": "http://180.93.114.115:3000/betvip/taixiu",
-    "betvip_md5": "http://180.93.114.115:3000/betvip/taixiumd5",
-    "xd88_tx": "http://180.93.114.115:3000/xocdia88/taixiu",
-    "xd88_md5": "http://180.93.114.115:3000/xocdia88/taixiumd5",
-    "lc79_tx": "http://180.93.114.115:3000/lc79/taixiu",
-    "lc79_md5": "http://180.93.114.115:3000/lc79/taixiumd5",
+    "sun_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/sunwintx",
+    "hit_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/hitclubtx",
+    "hit_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/hitclubmd5",
+    "b52_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/b52tx",
+    "b52_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/b52md5",
+    "betvip_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/betviptx",
+    "betvip_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/betvipmd5",
+    "xd88_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/xocdia88tx",
+    "xd88_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/xocdia88md5",
+    "lc79_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/lc79tx",
+    "lc79_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/lc79md5",
 }
 
 EMOJI_MAP = {
@@ -110,13 +109,10 @@ EMOJI_MAP = {
 
 GAME_MAP_NAME = {
     "sun_tx": "SUNWIN TÀI XỈU",
-    "sun_sb": "SUNWIN SICBO",
     "hit_tx": "HITCLUB TÀI XỈU",
     "hit_md5": "HITCLUB MD5",
-    "hit_sb": "HITCLUB SICBO",
     "b52_tx": "B52 TÀI XỈU",
     "b52_md5": "B52 MD5",
-    "b52_sb": "B52 SICBO",
     "betvip_tx": "BETVIP TÀI XỈU",
     "betvip_md5": "BETVIP MD5",
     "xd88_tx": "XOCDIA88 TÀI XỈU",
@@ -125,11 +121,12 @@ GAME_MAP_NAME = {
     "lc79_md5": "LC79 MD5",
 }
 
+# Cập nhật giá gói Key VIP
 KEY_PACKAGES = {
-    "buy_1d": {"days": 1, "price": 20000, "name": "1 Ngày"},
-    "buy_3d": {"days": 3, "price": 40000, "name": "3 Ngày"},
-    "buy_7d": {"days": 7, "price": 80000, "name": "7 Ngày"},
-    "buy_30d": {"days": 30, "price": 120000, "name": "1 Tháng"},
+    "buy_1d": {"days": 1, "price": 30000, "name": "1 Ngày"},
+    "buy_3d": {"days": 3, "price": 70000, "name": "3 Ngày"},
+    "buy_7d": {"days": 7, "price": 90000, "name": "7 Ngày"},
+    "buy_30d": {"days": 30, "price": 130000, "name": "1 Tháng"},
 }
 
 
@@ -471,6 +468,189 @@ def _normalize_pred(v):
     return s if s else None
 
 
+def _parse_api_history_items(raw_data):
+    """
+    Trích xuất danh sách lịch sử phiên thắng / sai từ JSON trả về của API.
+    Hỗ trợ nhiều cấu trúc phổ biến: lich_su, history, lich_su_phien, ket_qua_gan_day, data, items...
+    Mỗi phần tử trả về dạng: {"phien": str, "status": "ĐÚNG"|"SAI", "pred": str|None, "ket_qua": str|None}
+    """
+    if not isinstance(raw_data, dict):
+        return []
+
+    candidates = None
+    for k in (
+        "lich_su",
+        "lich_su_du_doan",
+        "lich_su_phien",
+        "history",
+        "recent_history",
+        "last_50",
+        "ket_qua_50_phien",
+        "list",
+        "items",
+    ):
+        val = raw_data.get(k)
+        if isinstance(val, list) and val:
+            candidates = val
+            break
+
+    if candidates is None and isinstance(raw_data.get("data"), list):
+        candidates = raw_data.get("data")
+
+    if not candidates:
+        return []
+
+    parsed = []
+    for idx, item in enumerate(candidates):
+        if isinstance(item, dict):
+            phien = _clean_session_code(
+                item.get("phien")
+                or item.get("Phien")
+                or item.get("session")
+                or item.get("id")
+                or f"auto_{idx}"
+            )
+            pred_raw = item.get("du_doan") or item.get("Du_doan") or item.get("pred") or item.get("chon")
+            kq_raw = item.get("ket_qua") or item.get("Ket_qua") or item.get("result") or item.get("kq")
+            status_raw = (
+                item.get("trang_thai")
+                or item.get("Trang_thai")
+                or item.get("status")
+                or item.get("danh_gia")
+                or item.get("ket_qua_du_doan")
+            )
+
+            win_flag = item.get("win") if "win" in item else item.get("is_win")
+            if win_flag is None and "dung" in item:
+                win_flag = item.get("dung")
+
+            pred_norm = _normalize_pred(pred_raw)
+            kq_norm = _normalize_kq(kq_raw)
+
+            status = None
+            if isinstance(win_flag, bool):
+                status = "ĐÚNG" if win_flag else "SAI"
+            elif status_raw is not None:
+                st_up = str(status_raw).strip().upper()
+                if any(x in st_up for x in ("WIN", "ĐÚNG", "DUNG", "TRUE", "THẮNG", "THANG", "1", "OK", "✓", "✔")):
+                    status = "ĐÚNG"
+                elif any(x in st_up for x in ("LOSE", "SAI", "FALSE", "THUA", "0", "MISS", "✗", "✘", "❌")):
+                    status = "SAI"
+
+            if not status and pred_norm and kq_norm:
+                status = "ĐÚNG" if pred_norm == kq_norm.upper() else "SAI"
+
+            if status in ("ĐÚNG", "SAI"):
+                parsed.append({
+                    "phien": str(phien),
+                    "pred": pred_norm,
+                    "ket_qua": kq_norm,
+                    "status": status,
+                })
+        elif isinstance(item, str):
+            st_up = item.strip().upper()
+            if st_up in ("W", "WIN", "ĐÚNG", "DUNG", "T", "1", "✓", "✔"):
+                parsed.append({"phien": f"str_{idx}", "pred": None, "ket_qua": None, "status": "ĐÚNG"})
+            elif st_up in ("L", "LOSE", "SAI", "THUA", "F", "0", "✗", "✘", "❌"):
+                parsed.append({"phien": f"str_{idx}", "pred": None, "ket_qua": None, "status": "SAI"})
+
+    return parsed[-50:]
+
+
+def _extract_direct_50_counts(raw_data):
+    """
+    Nếu API trả trực tiếp tổng thắng/thua 50 phiên (VD: dung_50, sai_50, win_50, lose_50, thang, thua),
+    trả về tuple (win_count, lose_count) đã chuẩn hóa trong khung 50 phiên; ngược lại trả None.
+    """
+    if not isinstance(raw_data, dict):
+        return None
+    w = None
+    l = None
+    for wk in ("dung_50", "win_50", "so_phien_dung", "thang_50", "thang", "win", "dung"):
+        if raw_data.get(wk) is not None and str(raw_data.get(wk)).isdigit():
+            w = int(raw_data.get(wk))
+            break
+    for lk in ("sai_50", "lose_50", "so_phien_sai", "thua_50", "thua", "lose", "sai"):
+        if raw_data.get(lk) is not None and str(raw_data.get(lk)).isdigit():
+            l = int(raw_data.get(lk))
+            break
+    if w is not None and l is not None:
+        total = w + l
+        if total > 50 and total > 0:
+            w = round(w * 50 / total)
+            l = 50 - w
+        return w, l
+    return None
+
+
+def sync_api_history_50(game_key, api_items=None, direct_counts=None):
+    """
+    Đồng bộ lịch sử thắng/thua từ API vào `game_history[game_key]` và tính cửa sổ trượt 50 phiên gần nhất.
+    Khi thêm phiên thắng mới vào 50 phiên đầy, phiên cũ nhất bị đẩy ra nên số thắng tăng và số thua tự giảm (tổng <= 50).
+    """
+    data = load_datakey()
+    hist = data.setdefault("game_history", {}).setdefault(game_key, [])
+    changed = False
+
+    if api_items:
+        by_phien = {str(x.get("phien")): x for x in hist if x.get("phien")}
+        for item in api_items:
+            p = str(item.get("phien"))
+            if not p:
+                continue
+            if p in by_phien:
+                ex = by_phien[p]
+                if item.get("pred") and not ex.get("pred"):
+                    ex["pred"] = item["pred"]
+                    changed = True
+                if item.get("ket_qua") and not ex.get("ket_qua"):
+                    ex["ket_qua"] = item["ket_qua"]
+                    changed = True
+                if item.get("status") in ("ĐÚNG", "SAI") and ex.get("status") != item["status"]:
+                    ex["status"] = item["status"]
+                    changed = True
+            else:
+                rec = {
+                    "phien": p,
+                    "ket_qua": item.get("ket_qua"),
+                    "pred": item.get("pred"),
+                    "status": item.get("status"),
+                    "time": get_hanoi_time().isoformat(),
+                }
+                hist.append(rec)
+                by_phien[p] = rec
+                changed = True
+
+    if len(hist) > 200:
+        del hist[:-200]
+        changed = True
+
+    if changed:
+        save_datakey(data)
+
+    settled = [x for x in hist if x.get("status") in ("ĐÚNG", "SAI")][-50:]
+    if settled:
+        win_50 = sum(1 for x in settled if x.get("status") == "ĐÚNG")
+        lose_50 = sum(1 for x in settled if x.get("status") == "SAI")
+        return win_50, lose_50, len(settled)
+
+    if direct_counts is not None:
+        w, l = direct_counts
+        return w, l, w + l
+
+    return 0, 0, 0
+
+
+def get_50_window_stats(game_key, data=None):
+    if data is None:
+        data = load_datakey()
+    hist = data.get("game_history", {}).get(game_key, [])
+    settled = [x for x in hist if x.get("status") in ("ĐÚNG", "SAI")][-50:]
+    win_50 = sum(1 for x in settled if x.get("status") == "ĐÚNG")
+    lose_50 = sum(1 for x in settled if x.get("status") == "SAI")
+    return win_50, lose_50, len(settled)
+
+
 def record_result(game_key, phien, ket_qua, pred=None):
     if not phien:
         return
@@ -622,10 +802,6 @@ def _clean_session_code(val):
 
 
 def _resolve_session_pair(raw_prev, raw_pred, shift=-1):
-    """
-    Chuẩn hóa cặp phiên (phiên trước đã có kết quả, phiên dự đoán kế tiếp).
-    Khi API trả nhanh hơn 1 phiên so với bàn game, shift=-1 sẽ lùi lại 1 phiên cho khớp bàn.
-    """
     prev_s = _clean_session_code(raw_prev)
     pred_s = _clean_session_code(raw_pred)
 
@@ -668,21 +844,6 @@ async def fetch_api_data(api_url, tool_type):
             if r.status_code != 200:
                 return None
             d = r.json()
-            is_sicbo = tool_type.endswith("_sb")
-            if is_sicbo:
-                raw_prev = d.get("phien_hien_tai") or d.get("phien_truoc") or d.get("Phien_hien_tai")
-                raw_pred = d.get("Phien_du_doan") or d.get("phien_du_doan") or d.get("phien_ke_tiep")
-                prev_s, pred_s = _resolve_session_pair(raw_prev, raw_pred, shift=-1)
-                live_kq = _normalize_kq(d.get("ket_qua") or d.get("ket_qua_phien"))
-                return {
-                    "game": tool_type.split("_")[0].upper(),
-                    "session": pred_s,
-                    "pred": _normalize_pred(d.get("du_doan") or d.get("Du_doan")),
-                    "rate": d.get("ty_le_thang", "88.5%"),
-                    "live_phien": prev_s,
-                    "live_kq": live_kq,
-                }
-
             raw_prev = d.get("phien_hien_tai") or d.get("Phien_Hien_tai") or d.get("phien_truoc")
             raw_pred = d.get("Phien_du_doan") or d.get("phien_du_doan") or d.get("phien_ke_tiep")
             prev_s, pred_s = _resolve_session_pair(raw_prev, raw_pred, shift=-1)
@@ -692,6 +853,8 @@ async def fetch_api_data(api_url, tool_type):
                 or d.get("ket_qua_phien")
                 or d.get("Du_doan_hien_tai")
             )
+            api_history = _parse_api_history_items(d)
+            direct_50 = _extract_direct_50_counts(d)
             return {
                 "game": tool_type.split("_")[0].upper(),
                 "session": pred_s,
@@ -705,6 +868,8 @@ async def fetch_api_data(api_url, tool_type):
                 "rate": d.get("ty_le_thang", "89.2%"),
                 "live_phien": prev_s,
                 "live_kq": live_kq,
+                "api_history": api_history,
+                "direct_50": direct_50,
             }
     except Exception:
         return None
@@ -732,7 +897,7 @@ def stop_auto_session(user_id, api_key=None):
                 task.cancel()
 
 
-def build_auto_analysis_message(api_key, res, win_count, lose_count, last_status_text=None):
+def build_auto_analysis_message(api_key, res, win_count, lose_count, total_50=0, last_status_text=None):
     g_icon = _game_emoji(api_key)
     t_icon = _table_emoji(api_key)
     full_game_name = GAME_MAP_NAME.get(api_key, res.get("game") or api_key.upper())
@@ -741,6 +906,8 @@ def build_auto_analysis_message(api_key, res, win_count, lose_count, last_status
     pred_session = res.get("session") or "-"
     pred_choice = _normalize_pred(res.get("pred")) or "-"
     win_rate = res.get("rate") or "89.2%"
+    sample_n = total_50 if total_50 > 0 else (win_count + lose_count)
+    acc_pct = f"{(win_count / sample_n * 100):.1f}%" if sample_n > 0 else "0.0%"
 
     lines = [
         f"{g_icon} <b>BÀN CHƠI:</b> <b>{full_game_name}</b> {t_icon}",
@@ -754,7 +921,7 @@ def build_auto_analysis_message(api_key, res, win_count, lose_count, last_status
     lines.append(f"{E_FIRE} <b>CHỐT CẦU:</b> <code>{pred_choice}</code> {E_CROWN}")
     lines.append(f"{E_CASH} <b>TỈ LỆ THẮNG:</b> <code>{win_rate}</code>")
     lines.append(
-        f"{E_MON} <b>TRẠNG THÁI BÀN:</b> Auto chạy | {E_WIN} <b>WIN:</b> <code>{win_count}</code> | {E_LOSE} <b>LOSE:</b> <code>{lose_count}</code>"
+        f"{E_MON} <b>THỐNG KÊ ({sample_n}/50 PHIÊN):</b> {E_WIN} <b>THẮNG:</b> <code>{win_count}</code> | {E_LOSE} <b>THUA:</b> <code>{lose_count}</code> (<code>{acc_pct}</code>)"
     )
     if last_status_text:
         lines.append(last_status_text)
@@ -793,6 +960,16 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                 await asyncio.sleep(3.5)
                 continue
 
+            # Đồng bộ lịch sử phiên thắng / sai từ API vào cửa sổ 50 phiên
+            win_50, lose_50, total_50 = sync_api_history_50(
+                api_key,
+                api_items=res.get("api_history"),
+                direct_counts=res.get("direct_50"),
+            )
+            st["win"] = win_50
+            st["lose"] = lose_50
+            st["total_50"] = total_50
+
             live_phien = res.get("live_phien")
             live_kq = res.get("live_kq")
             pred_session = res.get("session")
@@ -800,6 +977,10 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
 
             if live_phien and live_kq:
                 record_result(api_key, live_phien, live_kq)
+                win_50, lose_50, total_50 = get_50_window_stats(api_key)
+                st["win"] = win_50
+                st["lose"] = lose_50
+                st["total_50"] = total_50
 
             settled_notice = None
             active_phien = st.get("active_session")
@@ -814,35 +995,38 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
             ):
                 is_win = active_pred == live_kq.upper()
                 record_result(api_key, active_phien, live_kq, pred=active_pred)
+                win_50, lose_50, total_50 = get_50_window_stats(api_key)
+                st["win"] = win_50
+                st["lose"] = lose_50
+                st["total_50"] = total_50
+
                 if is_win:
-                    st["win"] = st.get("win", 0) + 1
-                    settled_notice = f"{E_WIN} <b>PHIÊN #{active_phien}: WIN</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
+                    settled_notice = f"{E_WIN} <b>PHIÊN #{active_phien}: THẮNG</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
                     try:
                         await bot.send_message(
                             chat_id=chat_id,
                             text=(
-                                f"{E_WIN} <b>ĐOÁN ĐÚNG PHIÊN #{active_phien} — WIN</b> {E_PARTY}\n"
+                                f"{E_WIN} <b>ĐOÁN ĐÚNG PHIÊN #{active_phien} — THẮNG</b> {E_PARTY}\n"
                                 f"━━━━━━━━━━━━━━━━━━━━\n"
                                 f"{E_GAME} Bàn: <b>{full_game_name}</b> {t_icon}\n"
                                 f"{E_FIRE} Chốt cầu: <code>{active_pred}</code> — Kết quả: <b>{live_kq}</b>\n"
-                                f"{E_MON} Thống kê bàn: {E_WIN} <b>{st['win']} WIN</b> | {E_LOSE} <b>{st['lose']} LOSE</b>"
+                                f"{E_MON} Thống kê ({total_50}/50 phiên): {E_WIN} <b>{win_50} THẮNG</b> | {E_LOSE} <b>{lose_50} THUA</b>"
                             ),
                             parse_mode="HTML",
                         )
                     except Exception:
                         pass
                 else:
-                    st["lose"] = st.get("lose", 0) + 1
-                    settled_notice = f"{E_LOSE} <b>PHIÊN #{active_phien}: LOSE</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
+                    settled_notice = f"{E_LOSE} <b>PHIÊN #{active_phien}: THUA</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
                     try:
                         await bot.send_message(
                             chat_id=chat_id,
                             text=(
-                                f"{E_LOSE} <b>PHIÊN #{active_phien} — LOSE</b> {E_ALERT}\n"
+                                f"{E_LOSE} <b>PHIÊN #{active_phien} — THUA</b> {E_ALERT}\n"
                                 f"━━━━━━━━━━━━━━━━━━━━\n"
                                 f"{E_GAME} Bàn: <b>{full_game_name}</b> {t_icon}\n"
                                 f"{E_FIRE} Chốt cầu: <code>{active_pred}</code> — Kết quả: <b>{live_kq}</b>\n"
-                                f"{E_MON} Thống kê bàn: {E_WIN} <b>{st['win']} WIN</b> | {E_LOSE} <b>{st['lose']} LOSE</b>"
+                                f"{E_MON} Thống kê ({total_50}/50 phiên): {E_WIN} <b>{win_50} THẮNG</b> | {E_LOSE} <b>{lose_50} THUA</b>"
                             ),
                             parse_mode="HTML",
                         )
@@ -873,6 +1057,7 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                     res,
                     st.get("win", 0),
                     st.get("lose", 0),
+                    total_50=st.get("total_50", 0),
                     last_status_text=settled_notice,
                 )
                 try:
@@ -894,7 +1079,7 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"{E_GEAR} Bàn: <b>{full_game_name}</b> {E_DICE3D}\n"
                             f"{E_CAL} Chốt cầu: <code>{pred_choice}</code> — Tỉ lệ: <code>{res.get('rate') or '89.2%'}</code>\n"
-                            f"{E_FIRE} Thống kê bàn: {E_WIN} <b>{st.get('win', 0)} WIN</b> | {E_LOSE} <b>{st.get('lose', 0)} LOSE</b>"
+                            f"{E_FIRE} Thống kê ({st.get('total_50', 0)}/50 phiên): {E_WIN} <b>{st.get('win', 0)} THẮNG</b> | {E_LOSE} <b>{st.get('lose', 0)} THUA</b>"
                         ),
                         parse_mode="HTML",
                     )
@@ -906,6 +1091,7 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                     res,
                     st.get("win", 0),
                     st.get("lose", 0),
+                    total_50=st.get("total_50", 0),
                     last_status_text=settled_notice,
                 )
                 try:
@@ -945,10 +1131,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- ADMIN COMMANDS ---
-# *key admin: /key <giá_trị> <đơn_vị> [số_thiết_bị]*
-#  ví dụ: /key 1 h 3   -> key 1 giờ, tối đa 3 thiết bị
+# *key admin: /key <giá_trị> <m|h|d> [số_thiết_bị]*
+#  ví dụ: /key 30 m 1  -> key 30 phút, tối đa 1 thiết bị
+#         /key 1 h 3   -> key 1 giờ, tối đa 3 thiết bị
 #         /key 3 d 2   -> key 3 ngày, tối đa 2 thiết bị
-#         /key 1 d      -> key 1 ngày, 1 thiết bị (mặc định)
 async def handle_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_datakey()
     if not is_admin(update.effective_user.id, data):
@@ -956,10 +1142,10 @@ async def handle_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     args = context.args
     if len(args) < 2:
         return await update.message.reply_text(
-            f"{E_ALERT} Dùng: <code>/key &lt;số&gt; &lt;h|d&gt; [số_thiết_bị]</code>\n"
-            f"Ví dụ: <code>/key 1 h 3</code> — 1 giờ, 3 thiết bị\n"
-            f"        <code>/key 3 d 2</code> — 3 ngày, 2 thiết bị\n"
-            f"        <code>/key 1 d</code> — 1 ngày, 1 thiết bị",
+            f"{E_ALERT} Dùng: <code>/key &lt;số&gt; &lt;m|h|d&gt; [số_thiết_bị]</code>\n"
+            f"Ví dụ: <code>/key 30 m</code> — 30 phút, 1 thiết bị\n"
+            f"        <code>/key 1 h 3</code> — 1 giờ, 3 thiết bị\n"
+            f"        <code>/key 3 d 2</code> — 3 ngày, 2 thiết bị",
             parse_mode="HTML",
         )
 
@@ -971,7 +1157,10 @@ async def handle_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return await update.message.reply_text(f"{E_CROSS} Số lượng không hợp lệ.", parse_mode="HTML")
 
     unit_raw = args[1].strip().lower()
-    if unit_raw in ("h", "hour", "hours", "gio", "giờ", "g"):
+    if unit_raw in ("m", "min", "mins", "minute", "minutes", "phut", "phút", "p"):
+        unit = "m"
+        duration_label = f"{val} phút"
+    elif unit_raw in ("h", "hour", "hours", "gio", "giờ", "g"):
         unit = "h"
         duration_label = f"{val} giờ"
     elif unit_raw in ("d", "day", "days", "ngay", "ngày", "n"):
@@ -979,7 +1168,7 @@ async def handle_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         duration_label = f"{val} ngày"
     else:
         return await update.message.reply_text(
-            f"{E_CROSS} Đơn vị không hợp lệ — dùng <code>h</code> (giờ) hoặc <code>d</code> (ngày).",
+            f"{E_CROSS} Đơn vị không hợp lệ — dùng <code>m</code> (phút), <code>h</code> (giờ) hoặc <code>d</code> (ngày).",
             parse_mode="HTML",
         )
 
@@ -999,13 +1188,16 @@ async def handle_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "used_by": None,
         "max_devices": max_devices,
         "devices": [],
+        "minutes": 0,
+        "hours": 0,
+        "days": 0,
     }
-    if unit == "h":
+    if unit == "m":
+        rec["minutes"] = val
+    elif unit == "h":
         rec["hours"] = val
-        rec["days"] = 0
     else:
         rec["days"] = val
-        rec["hours"] = 0
     data.setdefault("keys", {})[key] = rec
     save_datakey(data)
 
@@ -1152,7 +1344,7 @@ def build_stats_text(data=None):
     )
     pending_fk = sum(1 for r in data.get("free_key_requests", {}).values() if r.get("status") == "awaiting_admin")
     sub_count = len([x for x in data.get("sub_admins", []) if int(x) != int(ADMIN_ID)])
-    price_by_days = {1: 20000, 3: 40000, 7: 80000, 30: 120000}
+    price_by_days = {1: 30000, 3: 70000, 7: 90000, 30: 130000}
     revenue = sum(
         price_by_days.get(k.get("days", 0), 0)
         for k in data.get("keys", {}).values()
@@ -1168,9 +1360,70 @@ def build_stats_text(data=None):
         f"{E_CHECK} Key đã dùng: <code>{used_keys}</code>\n"
         f"{E_GIFT} Key còn trống: <code>{active_keys}</code>\n"
         f"{E_SPIN} Đơn nạp chờ duyệt: <code>{pending_dep}</code>\n"
-        f"{E_BELL} Đơn Free Key 3h chờ duyệt: <code>{pending_fk}</code>\n"
+        f"{E_BELL} Đơn Free Key 30p chờ duyệt: <code>{pending_fk}</code>\n"
         f"{E_CASH} Tổng doanh thu Key: <code>{revenue:,}đ</code> {E_MONEY}"
     )
+
+
+async def build_check_game_report():
+    """
+    Quét đồng thời tất cả game/bàn từ API, đồng bộ lịch sử 50 phiên gần nhất,
+    xếp hạng theo số phiên đúng / tỉ lệ thắng cao nhất.
+    """
+    tasks = [fetch_api_data(url, gkey) for gkey, url in API_URLS.items()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    rows = []
+    for (gkey, _), res in zip(API_URLS.items(), results):
+        if isinstance(res, dict) and res:
+            w, l, total = sync_api_history_50(
+                gkey,
+                api_items=res.get("api_history"),
+                direct_counts=res.get("direct_50"),
+            )
+            online = True
+        else:
+            w, l, total = get_50_window_stats(gkey)
+            online = False
+        pct = (w / total * 100.0) if total > 0 else -1.0
+        rows.append({
+            "key": gkey,
+            "name": GAME_MAP_NAME.get(gkey, gkey.upper()),
+            "win": w,
+            "lose": l,
+            "total": total,
+            "pct": pct,
+            "online": online,
+        })
+
+    rows.sort(key=lambda r: (r["pct"], r["win"], -r["lose"]), reverse=True)
+
+    lines = [
+        f"{E_CROWN} <b>CHECK GAME — TOP CHUẨN 50 PHIÊN</b> {E_FIRE}",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+    valid_rows = [r for r in rows if r["total"] > 0]
+    if valid_rows:
+        best = valid_rows[0]
+        lines.append(
+            f"{E_PARTY} <b>ĐANG CHUẨN NHẤT:</b> <b>{best['name']}</b> — "
+            f"{E_WIN} <code>{best['win']}</code> Đúng / {E_LOSE} <code>{best['lose']}</code> Sai (<code>{best['pct']:.1f}%</code>)"
+        )
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    for idx, r in enumerate(rows, 1):
+        g_icon = _game_emoji(r["key"])
+        t_icon = _table_emoji(r["key"])
+        if r["total"] > 0:
+            pct_str = f"{r['pct']:.1f}%"
+            stat_part = f"{E_WIN} <code>{r['win']}</code> Đúng | {E_LOSE} <code>{r['lose']}</code> Sai ({r['total']}/50 — <code>{pct_str}</code>)"
+        else:
+            status_tag = "Online — chưa có lịch sử 50p" if r["online"] else "API offline"
+            stat_part = f"{E_SPIN} <i>{status_tag}</i>"
+        crown_mark = f" {E_CROWN}" if idx == 1 and r["total"] > 0 else ""
+        lines.append(f"<b>{idx}.</b> {g_icon} <b>{r['name']}</b> {t_icon}{crown_mark}\n    {stat_part}")
+
+    return "\n".join(lines)
 
 
 # --- KEYBOARDS ---
@@ -1182,7 +1435,7 @@ def get_main_inline_keyboard(user_id, data=None):
             InlineKeyboardButton("Mua Gói Key VIP", callback_data="menu_buykey", api_kwargs=btn_icon("bag")),
         ],
         [
-            InlineKeyboardButton("Get Key Free 3h", callback_data="menu_freekey", api_kwargs=btn_icon("gift")),
+            InlineKeyboardButton("Get Key Free 30p", callback_data="menu_freekey", api_kwargs=btn_icon("gift")),
             InlineKeyboardButton("Kích Hoạt Key", callback_data="menu_activate", api_kwargs=btn_icon("crown")),
         ],
         [
@@ -1225,7 +1478,6 @@ def get_sub_inline_keyboard(game):
         "SUNWIN": [
             [
                 InlineKeyboardButton("SUNWIN TÀI XỈU", callback_data="run_sun_tx", api_kwargs=btn_icon("table_tx")),
-                InlineKeyboardButton("SUNWIN SICBO", callback_data="run_sun_sb", api_kwargs=btn_icon("table_sicbo")),
             ]
         ],
         "HITCLUB": [
@@ -1233,14 +1485,12 @@ def get_sub_inline_keyboard(game):
                 InlineKeyboardButton("HIT TÀI XỈU", callback_data="run_hit_tx", api_kwargs=btn_icon("table_tx")),
                 InlineKeyboardButton("HIT MD5", callback_data="run_hit_md5", api_kwargs=btn_icon("table_md5")),
             ],
-            [InlineKeyboardButton("HIT SICBO", callback_data="run_hit_sb", api_kwargs=btn_icon("table_sicbo"))],
         ],
         "B52": [
             [
                 InlineKeyboardButton("B52 TÀI XỈU", callback_data="run_b52_tx", api_kwargs=btn_icon("table_tx")),
                 InlineKeyboardButton("B52 MD5", callback_data="run_b52_md5", api_kwargs=btn_icon("table_md5")),
             ],
-            [InlineKeyboardButton("B52 SICBO", callback_data="run_b52_sb", api_kwargs=btn_icon("table_sicbo"))],
         ],
         "BETVIP": [
             [
@@ -1273,14 +1523,15 @@ def get_admin_inline_keyboard():
             InlineKeyboardButton("Tạo Key VIP", callback_data="admin_createkey", api_kwargs=btn_icon("crown")),
         ],
         [
+            InlineKeyboardButton("Check Game (50p)", callback_data="admin_checkgame", api_kwargs=btn_icon("fire")),
             InlineKeyboardButton("Thống Kê", callback_data="admin_stats", api_kwargs=btn_icon("monitor")),
+        ],
+        [
             InlineKeyboardButton("Broadcast", callback_data="admin_broadcast", api_kwargs=btn_icon("mega")),
-        ],
-        [
             InlineKeyboardButton("Đơn Nạp Chờ", callback_data="admin_deposits", api_kwargs=btn_icon("money")),
-            InlineKeyboardButton("Danh Sách User", callback_data="admin_users", api_kwargs=btn_icon("clip")),
         ],
         [
+            InlineKeyboardButton("Danh Sách User", callback_data="admin_users", api_kwargs=btn_icon("clip")),
             InlineKeyboardButton("Add / Xóa Admin Phụ", callback_data="admin_manage_sub", api_kwargs=btn_icon("gear")),
         ],
         [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
@@ -1310,7 +1561,7 @@ def get_admin_deposit_keyboard(req_id):
 def get_admin_freekey_keyboard(req_id):
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("Duyệt Key 3h", callback_data=f"fk_ok:{req_id}", api_kwargs=btn_icon("check")),
+            InlineKeyboardButton("Duyệt Key 30p", callback_data=f"fk_ok:{req_id}", api_kwargs=btn_icon("check")),
             InlineKeyboardButton("Từ Chối", callback_data=f"fk_no:{req_id}", api_kwargs=btn_icon("cross")),
         ],
     ])
@@ -1366,12 +1617,13 @@ def can_claim_free_key(uid_str, data):
     return True, None
 
 
-def issue_free_3h_key(uid_str, data):
+def issue_free_30m_key(uid_str, data):
     key = "".join(random.choices(string.ascii_uppercase + string.digits, k=15))
     now = get_hanoi_time()
     data.setdefault("keys", {})[key] = {
         "days": 0,
-        "hours": 3,
+        "hours": 0,
+        "minutes": 30,
         "used": False,
         "created_at": now.isoformat(),
         "used_by": None,
@@ -1392,7 +1644,7 @@ async def submit_freekey_photos_for_review(bot, chat_id, user, uid_str, photo_fi
         if not allowed:
             return await bot.send_message(
                 chat_id=chat_id,
-                text=f"{E_CROSS} Đã nhận Key Free 3h hôm nay — lượt kế: <code>{next_dt.strftime('%d/%m/%Y %H:%M')}</code> {E_BELL}",
+                text=f"{E_CROSS} Đã nhận Key Free 30p hôm nay — lượt kế: <code>{next_dt.strftime('%d/%m/%Y %H:%M')}</code> {E_BELL}",
                 parse_mode="HTML",
                 reply_markup=get_main_inline_keyboard(user.id, data),
             )
@@ -1413,7 +1665,7 @@ async def submit_freekey_photos_for_review(bot, chat_id, user, uid_str, photo_fi
 
     note_line = f"\n{E_CLIP} Ghi chú: <i>{note}</i>" if note else ""
     admin_caption = (
-        f"{E_GIFT} <b>ĐƠN KEY FREE 3H #{req_id}</b> {E_CROWN}\n"
+        f"{E_GIFT} <b>ĐƠN KEY FREE 30P #{req_id}</b> {E_CROWN}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{E_PARTY} Khách: <code>{uid_str}</code> (@{user.username or 'no_username'})\n"
         f"{E_CLIP} Tên: <b>{user.first_name or 'Vô Danh'}</b>\n"
@@ -1433,7 +1685,7 @@ async def submit_freekey_photos_for_review(bot, chat_id, user, uid_str, photo_fi
             f"{E_CHECK} <b>ĐÃ GỬI {len(photo_file_ids)} ẢNH CHỜ DUYỆT</b> {E_GIFT}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_PIN} Mã đơn: <code>#{req_id}</code>\n"
-            f"{E_CROWN} Duyệt xong bot gửi thẳng <b>Key Free 3h</b> cho bạn."
+            f"{E_CROWN} Duyệt xong bot gửi thẳng <b>Key Free 30p</b> cho bạn."
         ),
         parse_mode="HTML",
         reply_markup=get_main_inline_keyboard(user.id, data),
@@ -1462,7 +1714,7 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
             req["reviewed_at"] = get_hanoi_time().isoformat()
             req["reviewed_by"] = reviewer_id
             save_datakey(data)
-            msg_done = f"{E_CROSS} <b>Đã từ chối đơn Key Free 3h #{req_key}</b> (Khách: <code>{uid_str}</code>)."
+            msg_done = f"{E_CROSS} <b>Đã từ chối đơn Key Free 30p #{req_key}</b> (Khách: <code>{uid_str}</code>)."
             try:
                 await q.edit_message_caption(caption=msg_done, parse_mode="HTML")
             except Exception:
@@ -1470,7 +1722,7 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
             try:
                 await context.bot.send_message(
                     int(uid_str),
-                    f"{E_CROSS} <b>ĐƠN KEY FREE 3H #{req_key} BỊ TỪ CHỐI</b> {E_ALERT}\n"
+                    f"{E_CROSS} <b>ĐƠN KEY FREE 30P #{req_key} BỊ TỪ CHỐI</b> {E_ALERT}\n"
                     f"{E_CLIP} Kiểm tra lại ảnh rải <code>{FREE_KEY_BOT}</code> đủ 3 box hoặc liên hệ {ADMIN_HANDLE}.",
                     parse_mode="HTML",
                 )
@@ -1485,9 +1737,9 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
                 req["reviewed_at"] = get_hanoi_time().isoformat()
                 req["reviewed_by"] = reviewer_id
                 save_datakey(data)
-                return await q.answer("Khách này đã nhận Key Free 3h trong 24h qua!", show_alert=True)
+                return await q.answer("Khách này đã nhận Key Free 30p trong 24h qua!", show_alert=True)
 
-            key = issue_free_3h_key(uid_str, data)
+            key = issue_free_30m_key(uid_str, data)
             now_str = get_hanoi_time().strftime("%d/%m/%Y %H:%M:%S")
             req["status"] = "approved"
             req["issued_key"] = key
@@ -1504,10 +1756,10 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
             masked_key = _mask_key_for_bill(key)
             masked_uid = _mask_uid_for_bill(uid_str)
             await notify_checkbill_bot(
-                f"{E_GIFT} <b>DUYỆT KEY FREE 3H THÀNH CÔNG</b> {E_CLOVER}\n"
+                f"{E_GIFT} <b>DUYỆT KEY FREE 30P THÀNH CÔNG</b> {E_CLOVER}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{E_MAIL} Tài khoản: <code>{acc_name}</code> (<code>{masked_uid}</code>)\n"
-                f"{E_CART} Gói & giá: <b>Key Free 3 Giờ</b> — <code>0đ</code>\n"
+                f"{E_CART} Gói & giá: <b>Key Free 30 Phút</b> — <code>0đ</code>\n"
                 f"{E_BANK} Mã key: <tg-spoiler>{masked_key}</tg-spoiler>\n"
                 f"{E_CLOVER} Thời gian: <code>{now_str}</code>\n"
                 f"{E_BOLT} Trạng thái: <b>Đã xử lí</b>",
@@ -1516,9 +1768,9 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
             )
 
             msg_done = (
-                f"{E_CHECK} <b>Đã duyệt & gửi Key Free 3h #{req_key}</b> {E_PARTY}\n"
+                f"{E_CHECK} <b>Đã duyệt & gửi Key Free 30p #{req_key}</b> {E_PARTY}\n"
                 f"{E_PIN} Khách: <code>{uid_str}</code>\n"
-                f"{E_GIFT} Key 3h: <code>{key}</code>"
+                f"{E_GIFT} Key 30p: <code>{key}</code>"
             )
             try:
                 await q.edit_message_caption(caption=msg_done, parse_mode="HTML")
@@ -1527,11 +1779,11 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
             try:
                 await context.bot.send_message(
                     int(uid_str),
-                    f"{E_PARTY} <b>ĐÃ DUYỆT KEY FREE 3H</b> {E_GIFT}\n"
+                    f"{E_PARTY} <b>ĐÃ DUYỆT KEY FREE 30P</b> {E_GIFT}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"{E_PIN} Mã đơn: <code>#{req_key}</code>\n"
-                    f"{E_CROWN} Key 3h: <code>{key}</code>\n"
-                    f"{E_BELL} Hạn dùng: <b>3 giờ</b> {E_FIRE}\n"
+                    f"{E_CROWN} Key 30p: <code>{key}</code>\n"
+                    f"{E_BELL} Hạn dùng: <b>30 phút</b> {E_FIRE}\n"
                     f"{E_CHECK} Vào <b>Kích Hoạt Key</b> dán mã để dùng ngay.",
                     parse_mode="HTML",
                 )
@@ -1979,7 +2231,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key in data.get("keys", {}) and not data["keys"][key].get("used"):
             kinfo = data["keys"][key]
 
-            # *kiểm tra giới hạn thiết bị*
             max_devices = int(kinfo.get("max_devices", 1) or 1)
             devices = kinfo.setdefault("devices", [])
             if uid_str not in devices:
@@ -1997,7 +2248,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             now = get_hanoi_time()
             cur_exp = parse_hanoi_time(data["users"][uid_str].get("key_expires"))
             base_time = cur_exp if (cur_exp and cur_exp > now) else now
-            if kinfo.get("hours"):
+            if kinfo.get("minutes"):
+                exp = base_time + timedelta(minutes=int(kinfo["minutes"]))
+                duration_label = f"{int(kinfo['minutes'])} phút"
+            elif kinfo.get("hours"):
                 exp = base_time + timedelta(hours=int(kinfo["hours"]))
                 duration_label = f"{int(kinfo['hours'])} giờ"
             else:
@@ -2006,7 +2260,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 duration_label = f"{days} ngày"
 
             data["users"][uid_str]["key_expires"] = exp.isoformat()
-            # *chỉ đánh dấu used khi hết slot thiết bị*
             if len(devices) >= max_devices:
                 data["keys"][key]["used"] = True
                 data["keys"][key]["used_by"] = uid_str
@@ -2095,12 +2348,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     if context.user_data.get("waiting_create_key"):
-        # *cú pháp nhập: "<số> <h|d> [số_thiết_bị]"*
+        # *cú pháp nhập: "<số> <m|h|d> [số_thiết_bị]"*
         parts = msg.split()
         if len(parts) < 2:
             return await update.message.reply_text(
-                f"{E_ALERT} Nhập: <code>&lt;số&gt; &lt;h|d&gt; [số_thiết_bị]</code>\n"
-                f"VD: <code>1 h 3</code> / <code>3 d 2</code> / <code>1 d</code>",
+                f"{E_ALERT} Nhập: <code>&lt;số&gt; &lt;m|h|d&gt; [số_thiết_bị]</code>\n"
+                f"VD: <code>30 m</code> / <code>1 h 3</code> / <code>3 d 2</code>",
                 parse_mode="HTML",
             )
         try:
@@ -2111,7 +2364,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text(f"{E_CROSS} Số lượng không hợp lệ.", parse_mode="HTML")
 
         unit_raw = parts[1].lower()
-        if unit_raw in ("h", "hour", "hours", "gio", "giờ", "g"):
+        if unit_raw in ("m", "min", "mins", "minute", "minutes", "phut", "phút", "p"):
+            unit = "m"
+            duration_label = f"{val} phút"
+        elif unit_raw in ("h", "hour", "hours", "gio", "giờ", "g"):
             unit = "h"
             duration_label = f"{val} giờ"
         elif unit_raw in ("d", "day", "days", "ngay", "ngày", "n"):
@@ -2119,7 +2375,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             duration_label = f"{val} ngày"
         else:
             return await update.message.reply_text(
-                f"{E_CROSS} Đơn vị không hợp lệ — dùng <code>h</code> hoặc <code>d</code>.",
+                f"{E_CROSS} Đơn vị không hợp lệ — dùng <code>m</code>, <code>h</code> hoặc <code>d</code>.",
                 parse_mode="HTML",
             )
 
@@ -2139,13 +2395,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "used_by": None,
             "max_devices": max_devices,
             "devices": [],
+            "minutes": 0,
+            "hours": 0,
+            "days": 0,
         }
-        if unit == "h":
+        if unit == "m":
+            rec["minutes"] = val
+        elif unit == "h":
             rec["hours"] = val
-            rec["days"] = 0
         else:
             rec["days"] = val
-            rec["hours"] = 0
         data.setdefault("keys", {})[key] = rec
         save_datakey(data)
         context.user_data["waiting_create_key"] = False
@@ -2229,9 +2488,10 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         target_api = data_tag.split(":", 1)[1]
         stop_auto_session(user.id, target_api)
         g_name = GAME_MAP_NAME.get(target_api, target_api.upper())
+        w50, l50, t50 = get_50_window_stats(target_api, data)
         return await q.edit_message_text(
             f"{E_CROSS} <b>ĐÃ TẮT AUTO BÀN {g_name}</b> {E_GAME}\n"
-            f"{E_BELL} Trạng thái WIN/LOSE bàn này đã reset về 0.",
+            f"{E_MON} Thống kê ({t50}/50 phiên): {E_WIN} <b>{w50} THẮNG</b> | {E_LOSE} <b>{l50} THUA</b>",
             parse_mode="HTML",
             reply_markup=get_main_inline_keyboard(user.id, data),
         )
@@ -2301,7 +2561,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         allowed, next_dt = can_claim_free_key(uid, data)
         if not allowed:
             return await q.edit_message_text(
-                f"{E_CROSS} <b>ĐÃ NHẬN KEY FREE 3H HÔM NAY</b> {E_ALERT}\n"
+                f"{E_CROSS} <b>ĐÃ NHẬN KEY FREE 30P HÔM NAY</b> {E_ALERT}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{E_BELL} Lượt kế: <code>{next_dt.strftime('%d/%m/%Y %H:%M')}</code>",
                 parse_mode="HTML",
@@ -2309,11 +2569,11 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             )
         context.user_data["waiting_freekey_photo"] = True
         return await q.edit_message_text(
-            f"{E_GIFT} <b>GET KEY FREE 3 GIỜ</b> {E_CROWN}\n"
+            f"{E_GIFT} <b>GET KEY FREE 30 PHÚT</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_FIRE} 1. Rải nội dung có <code>{FREE_KEY_BOT}</code> vào tối thiểu <b>3 box</b>.\n"
             f"{E_CLIP} 2. Gửi ảnh chứng minh ngay tại đây.\n"
-            f"{E_CHECK} 3. Admin duyệt xong bot gửi thẳng <b>Key 3h</b> cho bạn.\n"
+            f"{E_CHECK} 3. Admin duyệt xong bot gửi thẳng <b>Key 30p</b> cho bạn.\n"
             f"{E_PIN} Mẫu: <code>Tool soi cầu real-time miễn phí tại {FREE_KEY_BOT}</code>",
             parse_mode="HTML",
             reply_markup=get_back_keyboard(),
@@ -2382,20 +2642,20 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if data_tag == "menu_buykey":
         kb = [
-            [InlineKeyboardButton("Gói 1 Ngày — 20,000đ", callback_data="buy_1d", api_kwargs=btn_icon("money"))],
-            [InlineKeyboardButton("Gói 3 Ngày — 40,000đ", callback_data="buy_3d", api_kwargs=btn_icon("fire"))],
-            [InlineKeyboardButton("Gói 7 Ngày — 80,000đ", callback_data="buy_7d", api_kwargs=btn_icon("bag"))],
-            [InlineKeyboardButton("Gói 1 Tháng — 120,000đ", callback_data="buy_30d", api_kwargs=btn_icon("crown"))],
+            [InlineKeyboardButton("Gói 1 Ngày — 30,000đ", callback_data="buy_1d", api_kwargs=btn_icon("money"))],
+            [InlineKeyboardButton("Gói 3 Ngày — 70,000đ", callback_data="buy_3d", api_kwargs=btn_icon("fire"))],
+            [InlineKeyboardButton("Gói 7 Ngày — 90,000đ", callback_data="buy_7d", api_kwargs=btn_icon("bag"))],
+            [InlineKeyboardButton("Gói 1 Tháng — 130,000đ", callback_data="buy_30d", api_kwargs=btn_icon("crown"))],
             [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
         ]
         return await q.edit_message_text(
             f"{E_BAG} <b>BẢNG GIÁ GÓI KEY VIP</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_MONEY} Số dư ví: <code>{u.get('balance', 0):,}đ</code> {E_CASH}\n"
-            f"{E_CAL} <b>1 Ngày:</b> <code>20,000đ</code>\n"
-            f"{E_FIRE} <b>3 Ngày:</b> <code>40,000đ</code>\n"
-            f"{E_BAG} <b>7 Ngày:</b> <code>80,000đ</code>\n"
-            f"{E_CROWN} <b>1 Tháng:</b> <code>120,000đ</code>",
+            f"{E_CAL} <b>1 Ngày:</b> <code>30,000đ</code>\n"
+            f"{E_FIRE} <b>3 Ngày:</b> <code>70,000đ</code>\n"
+            f"{E_BAG} <b>7 Ngày:</b> <code>90,000đ</code>\n"
+            f"{E_CROWN} <b>1 Tháng:</b> <code>130,000đ</code>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(kb),
         )
@@ -2416,6 +2676,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             data_fresh.setdefault("keys", {})[key] = {
                 "days": p["days"],
                 "hours": 0,
+                "minutes": 0,
                 "used": False,
                 "created_at": now.isoformat(),
                 "used_by": None,
@@ -2544,6 +2805,24 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=get_admin_inline_keyboard(),
         )
 
+    if data_tag == "admin_checkgame":
+        if not is_admin(user.id, data):
+            return
+        await q.edit_message_text(
+            f"{E_SPIN} <b>ĐANG QUÉT DỮ LIỆU 50 PHIÊN TOÀN BỘ GAME...</b> {E_FIRE}",
+            parse_mode="HTML",
+        )
+        report_text = await build_check_game_report()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Làm Mới Check Game", callback_data="admin_checkgame", api_kwargs=btn_icon("fire"))],
+            [InlineKeyboardButton("Quay Lại Admin", callback_data="admin_tools", api_kwargs=btn_icon("down"))],
+        ])
+        return await q.edit_message_text(
+            report_text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+
     if data_tag == "admin_giftcode":
         if not is_admin(user.id, data):
             return
@@ -2562,10 +2841,10 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         return await q.edit_message_text(
             f"{E_CROWN} <b>TẠO KEY VIP</b> {E_FIRE}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{E_PIN} Nhập theo cú pháp: <code>&lt;số&gt; &lt;h|d&gt; [số_thiết_bị]</code>\n"
-            f"{E_CAL} VD: <code>1 h 3</code> (1 giờ, 3 thiết bị)\n"
-            f"        <code>3 d 2</code> (3 ngày, 2 thiết bị)\n"
-            f"        <code>1 d</code> (1 ngày, 1 thiết bị)",
+            f"{E_PIN} Nhập theo cú pháp: <code>&lt;số&gt; &lt;m|h|d&gt; [số_thiết_bị]</code>\n"
+            f"{E_CAL} VD: <code>30 m</code> (30 phút, 1 thiết bị)\n"
+            f"        <code>1 h 3</code> (1 giờ, 3 thiết bị)\n"
+            f"        <code>3 d 2</code> (3 ngày, 2 thiết bị)",
             parse_mode="HTML",
             reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
@@ -2653,6 +2932,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         stop_auto_session(user.id, api_key)
         s_key = _session_key(user.id, api_key)
+        w50, l50, t50 = get_50_window_stats(api_key, data)
         placeholder = await q.edit_message_text(
             f"{E_SPIN} <b>ĐANG KHỞI TẠO AUTO...</b> {E_GAME}\n"
             f"{E_BELL} Bàn: <b>{GAME_MAP_NAME.get(api_key, api_key.upper())}</b>",
@@ -2660,8 +2940,9 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
         AUTO_SESSIONS[s_key] = {
             "task": None,
-            "win": 0,
-            "lose": 0,
+            "win": w50,
+            "lose": l50,
+            "total_50": t50,
             "active_session": None,
             "active_pred": None,
             "baseline_kq_for_active": None,
