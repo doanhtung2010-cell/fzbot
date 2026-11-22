@@ -628,15 +628,22 @@ def sync_api_history_50(game_key, api_items=None, direct_counts=None):
     if changed:
         save_datakey(data)
 
+    if direct_counts is not None:
+        w, l = direct_counts
+        return w, l, w + l
+
+    if api_items:
+        settled_api = [x for x in api_items if x.get("status") in ("ĐÚNG", "SAI")][-50:]
+        if settled_api:
+            win_50 = sum(1 for x in settled_api if x.get("status") == "ĐÚNG")
+            lose_50 = sum(1 for x in settled_api if x.get("status") == "SAI")
+            return win_50, lose_50, len(settled_api)
+
     settled = [x for x in hist if x.get("status") in ("ĐÚNG", "SAI")][-50:]
     if settled:
         win_50 = sum(1 for x in settled if x.get("status") == "ĐÚNG")
         lose_50 = sum(1 for x in settled if x.get("status") == "SAI")
         return win_50, lose_50, len(settled)
-
-    if direct_counts is not None:
-        w, l = direct_counts
-        return w, l, w + l
 
     return 0, 0, 0
 
@@ -846,7 +853,7 @@ async def fetch_api_data(api_url, tool_type):
             d = r.json()
             raw_prev = d.get("phien_hien_tai") or d.get("Phien_Hien_tai") or d.get("phien_truoc")
             raw_pred = d.get("Phien_du_doan") or d.get("phien_du_doan") or d.get("phien_ke_tiep")
-            prev_s, pred_s = _resolve_session_pair(raw_prev, raw_pred, shift=-1)
+            prev_s, pred_s = _resolve_session_pair(raw_prev, raw_pred, shift=0)
             live_kq = _normalize_kq(
                 d.get("ket_qua")
                 or d.get("Ket_qua")
@@ -975,12 +982,15 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
             pred_session = res.get("session")
             pred_choice = _normalize_pred(res.get("pred"))
 
+            has_api_50 = bool(res.get("api_history") or res.get("direct_50"))
+
             if live_phien and live_kq:
                 record_result(api_key, live_phien, live_kq)
-                win_50, lose_50, total_50 = get_50_window_stats(api_key)
-                st["win"] = win_50
-                st["lose"] = lose_50
-                st["total_50"] = total_50
+                if not has_api_50:
+                    win_50, lose_50, total_50 = get_50_window_stats(api_key)
+                    st["win"] = win_50
+                    st["lose"] = lose_50
+                    st["total_50"] = total_50
 
             settled_notice = None
             active_phien = st.get("active_session")
@@ -995,10 +1005,15 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
             ):
                 is_win = active_pred == live_kq.upper()
                 record_result(api_key, active_phien, live_kq, pred=active_pred)
-                win_50, lose_50, total_50 = get_50_window_stats(api_key)
-                st["win"] = win_50
-                st["lose"] = lose_50
-                st["total_50"] = total_50
+                if not has_api_50:
+                    win_50, lose_50, total_50 = get_50_window_stats(api_key)
+                    st["win"] = win_50
+                    st["lose"] = lose_50
+                    st["total_50"] = total_50
+                else:
+                    win_50 = st["win"]
+                    lose_50 = st["lose"]
+                    total_50 = st["total_50"]
 
                 if is_win:
                     settled_notice = f"{E_WIN} <b>PHIÊN #{active_phien}: THẮNG</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
