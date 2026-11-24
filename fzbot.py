@@ -1,14 +1,18 @@
-# language: Python, file: fzbot.py, target: Python 3.10+ / python-telegram-bot v20+
+# language: Python, file: fzbot_checkbank_fix.py, target: Python 3.10+ / python-telegram-bot v20+
 import logging
 import asyncio
 import httpx
 import json
 import string
 import os
+import io
+import base64
 import random
+import re
+from urllib.parse import urlencode
 import pytz
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputFile
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -18,6 +22,13 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+try:
+    import qrcode
+    from PIL import Image
+    HAS_LOCAL_QR = True
+except ImportError:
+    HAS_LOCAL_QR = False
+
 TOKEN = "9013814469:AAFejc8zagffNtXldhGQuhnFrBgbJgtDVQ4"
 MAIN_BOT_USERNAME = "fztooltxvip_bot"
 NOTIFY_BOT_TOKEN = "9073534499:AAHiHoICs6-iwEAZg9CdKlnIbvCT8e5wpMw"
@@ -26,7 +37,41 @@ OPEN_BOT_TARGET = "@fztooltxfree_bot"
 ADMIN_ID = 7504960222
 DATAKEY_FILE = "datakey.json"
 HANOI_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
-QR_URL = "https://i.postimg.cc/v8kGHhMv/6334773150821849158.jpg"
+
+# Cấu hình API Bank & VietQR
+APIBANK_URL = "https://thueapibank.vn/historyapivcb/0dd2a2e9204ffa1585a143b22ed076e3"
+VIETQR_BANK_ID = "VCB"
+VIETQR_ACCOUNT_NO = "1072492580"
+VIETQR_ACCOUNT_NAME = "DO ANH TUNG"
+VIETQR_TEMPLATE = "compact2"
+
+BANK_BIN_MAP = {
+    "VCB": "970436", "VIETCOMBANK": "970436",
+    "ICB": "970415", "VIETINBANK": "970415",
+    "BIDV": "970418",
+    "VBA": "970405", "AGRIBANK": "970405",
+    "TCB": "970407", "TECHCOMBANK": "970407",
+    "MB": "970422", "MBBANK": "970422",
+    "ACB": "970416",
+    "VPB": "970432", "VPBANK": "970432",
+    "TPB": "970423", "TPBANK": "970423",
+    "STB": "970403", "SACOMBANK": "970403",
+    "HDB": "970437", "HDBANK": "970437",
+    "VIB": "970441",
+    "SHB": "970443",
+    "OCB": "970448",
+    "MSB": "970426",
+    "SEAB": "970440",
+    "EIB": "970431",
+    "LPB": "970449",
+    "NAB": "970428",
+    "ABB": "970425",
+    "BAB": "970409",
+    "SCB": "970429",
+    "CAKE": "546034",
+    "UBANK": "546035",
+    "TIMO": "963388",
+}
 
 CHANNEL_THONG_BAO = "https://t.me/kenhthongbaofzteam"
 CHANNEL_CHAT = "https://t.me/kenhchatfzteam"
@@ -41,7 +86,7 @@ REQUIRED_BOXES = [
     {"name": "Kênh Check Bill FZ Team", "url": CHANNEL_BILL, "chat_id": None},
 ]
 
-# Cập nhật danh sách API theo apitiendat.txt
+# Danh sách API game
 API_URLS = {
     "sun_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/sunwintx",
     "hit_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/hitclubtx",
@@ -54,6 +99,10 @@ API_URLS = {
     "xd88_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/xocdia88md5",
     "lc79_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/lc79tx",
     "lc79_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/lc79md5",
+    "g68_hu": "https://leaf-reflect-disco-baker.trycloudflare.com/68gbbnxanh",
+    "g68_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/68gbbnmd5",
+    "max789_tx": "https://leaf-reflect-disco-baker.trycloudflare.com/max789tx",
+    "max789_md5": "https://leaf-reflect-disco-baker.trycloudflare.com/max789md5",
 }
 
 EMOJI_MAP = {
@@ -80,8 +129,8 @@ EMOJI_MAP = {
     "clip": "6282961933373024331",
     "check": "6282757029073265526",
     "cross": "6187956445036682670",
-    "game68": "6283069706987381126",
-    "club789": "6282745939467708386",
+    "game68": "6282892088614856711",
+    "club789": "6161305782122980113",
     "go88": "6282946544505202249",
     "sumclub": "6282887140812532517",
     "tx_md5": "6282907829669994559",
@@ -119,9 +168,12 @@ GAME_MAP_NAME = {
     "xd88_md5": "XOCDIA88 MD5",
     "lc79_tx": "LC79 TÀI XỈU",
     "lc79_md5": "LC79 MD5",
+    "g68_hu": "GAME 68 HŨ",
+    "g68_md5": "GAME 68 MD5",
+    "max789_tx": "MAX789 TÀI XỈU",
+    "max789_md5": "MAX789 MD5",
 }
 
-# Cập nhật giá gói Key VIP
 KEY_PACKAGES = {
     "buy_1d": {"days": 1, "price": 30000, "name": "1 Ngày"},
     "buy_3d": {"days": 3, "price": 70000, "name": "3 Ngày"},
@@ -180,6 +232,8 @@ E_B52 = ce("b52_logo", "🃏")
 E_BETVIP = ce("betvip_logo", "🏆")
 E_LC79 = ce("lc79_logo", "💎")
 E_XD88 = ce("xd88_logo", "🍀")
+E_GAME68 = ce("game68", "🎮")
+E_MAX789 = ce("club789", "🎮")
 
 E_TABLE_TX = ce("table_tx", "🎮")
 E_TABLE_MD5 = ce("table_md5", "🎮")
@@ -192,6 +246,22 @@ MEDIA_GROUP_ACTIVE_MODE = {}
 
 AUTO_SESSIONS = {}
 DATA_LOCK = asyncio.Lock()
+
+
+async def safe_edit_or_send(q, text, reply_markup=None, parse_mode="HTML"):
+    msg = q.message
+    try:
+        if msg and msg.photo:
+            return await q.edit_message_caption(caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        return await q.edit_message_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        err_s = str(e).lower()
+        if "message is not modified" in err_s:
+            return msg
+        try:
+            return await msg.reply_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        except Exception:
+            return None
 
 
 def _game_emoji(api_key):
@@ -207,6 +277,10 @@ def _game_emoji(api_key):
         return E_LC79
     if api_key.startswith("xd88"):
         return E_XD88
+    if api_key.startswith("g68"):
+        return E_GAME68
+    if api_key.startswith("max789"):
+        return E_MAX789
     return E_GAME
 
 
@@ -216,14 +290,6 @@ def _table_emoji(api_key):
     if api_key.endswith("_md5"):
         return E_TABLE_MD5
     return E_TABLE_TX
-
-
-def _table_icon_key(api_key):
-    if api_key.endswith("_sb"):
-        return "table_sicbo"
-    if api_key.endswith("_md5"):
-        return "table_md5"
-    return "table_tx"
 
 
 def _mask_key_for_bill(key_str):
@@ -305,6 +371,7 @@ def init_datakey_file():
             "free_key_requests": {},
             "sub_admins": [int(ADMIN_ID)],
             "free_key_claims": {},
+            "processed_tx_ids": [],
             "settings": {
                 "last_user_id": 0,
                 "last_key_id": 0,
@@ -324,6 +391,7 @@ def load_datakey():
             data.setdefault("sub_admins", [])
             data.setdefault("free_key_claims", {})
             data.setdefault("free_key_requests", {})
+            data.setdefault("processed_tx_ids", [])
             return ensure_admin_owner(data)
     except Exception:
         data = {
@@ -338,6 +406,7 @@ def load_datakey():
             "free_key_requests": {},
             "sub_admins": [int(ADMIN_ID)],
             "free_key_claims": {},
+            "processed_tx_ids": [],
             "settings": {
                 "last_user_id": 0,
                 "last_key_id": 0,
@@ -468,26 +537,21 @@ def _normalize_pred(v):
     return s if s else None
 
 
+def _clean_session_code(val):
+    if val is None:
+        return None
+    s = str(val).strip().lstrip("#")
+    return s if s else None
+
+
 def _parse_api_history_items(raw_data):
-    """
-    Trích xuất danh sách lịch sử phiên thắng / sai từ JSON trả về của API.
-    Hỗ trợ nhiều cấu trúc phổ biến: lich_su, history, lich_su_phien, ket_qua_gan_day, data, items...
-    Mỗi phần tử trả về dạng: {"phien": str, "status": "ĐÚNG"|"SAI", "pred": str|None, "ket_qua": str|None}
-    """
     if not isinstance(raw_data, dict):
         return []
 
     candidates = None
     for k in (
-        "lich_su",
-        "lich_su_du_doan",
-        "lich_su_phien",
-        "history",
-        "recent_history",
-        "last_50",
-        "ket_qua_50_phien",
-        "list",
-        "items",
+        "lich_su", "lich_su_du_doan", "lich_su_phien", "history",
+        "recent_history", "last_50", "ket_qua_50_phien", "list", "items",
     ):
         val = raw_data.get(k)
         if isinstance(val, list) and val:
@@ -504,22 +568,14 @@ def _parse_api_history_items(raw_data):
     for idx, item in enumerate(candidates):
         if isinstance(item, dict):
             phien = _clean_session_code(
-                item.get("phien")
-                or item.get("Phien")
-                or item.get("session")
-                or item.get("id")
-                or f"auto_{idx}"
+                item.get("phien") or item.get("Phien") or item.get("session") or item.get("id") or f"auto_{idx}"
             )
             pred_raw = item.get("du_doan") or item.get("Du_doan") or item.get("pred") or item.get("chon")
             kq_raw = item.get("ket_qua") or item.get("Ket_qua") or item.get("result") or item.get("kq")
             status_raw = (
-                item.get("trang_thai")
-                or item.get("Trang_thai")
-                or item.get("status")
-                or item.get("danh_gia")
-                or item.get("ket_qua_du_doan")
+                item.get("trang_thai") or item.get("Trang_thai") or item.get("status")
+                or item.get("danh_gia") or item.get("ket_qua_du_doan")
             )
-
             win_flag = item.get("win") if "win" in item else item.get("is_win")
             if win_flag is None and "dung" in item:
                 win_flag = item.get("dung")
@@ -541,12 +597,7 @@ def _parse_api_history_items(raw_data):
                 status = "ĐÚNG" if pred_norm == kq_norm.upper() else "SAI"
 
             if status in ("ĐÚNG", "SAI"):
-                parsed.append({
-                    "phien": str(phien),
-                    "pred": pred_norm,
-                    "ket_qua": kq_norm,
-                    "status": status,
-                })
+                parsed.append({"phien": str(phien), "pred": pred_norm, "ket_qua": kq_norm, "status": status})
         elif isinstance(item, str):
             st_up = item.strip().upper()
             if st_up in ("W", "WIN", "ĐÚNG", "DUNG", "T", "1", "✓", "✔"):
@@ -558,10 +609,6 @@ def _parse_api_history_items(raw_data):
 
 
 def _extract_direct_50_counts(raw_data):
-    """
-    Nếu API trả trực tiếp tổng thắng/thua 50 phiên (VD: dung_50, sai_50, win_50, lose_50, thang, thua),
-    trả về tuple (win_count, lose_count) đã chuẩn hóa trong khung 50 phiên; ngược lại trả None.
-    """
     if not isinstance(raw_data, dict):
         return None
     w = None
@@ -584,10 +631,6 @@ def _extract_direct_50_counts(raw_data):
 
 
 def sync_api_history_50(game_key, api_items=None, direct_counts=None):
-    """
-    Đồng bộ lịch sử thắng/thua từ API vào `game_history[game_key]` và tính cửa sổ trượt 50 phiên gần nhất.
-    Khi thêm phiên thắng mới vào 50 phiên đầy, phiên cũ nhất bị đẩy ra nên số thắng tăng và số thua tự giảm (tổng <= 50).
-    """
     data = load_datakey()
     hist = data.setdefault("game_history", {}).setdefault(game_key, [])
     changed = False
@@ -740,11 +783,8 @@ async def send_3box_gate(update_or_query, edit=False, reason=None):
         f"{E_CHECK} Xong bấm <b>Check OK</b>.{extra}"
     )
     kb = get_gate_keyboard()
-    if edit and hasattr(update_or_query, "edit_message_text"):
-        try:
-            return await update_or_query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
-        except Exception:
-            return await update_or_query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    if edit and hasattr(update_or_query, "message"):
+        return await safe_edit_or_send(update_or_query, text, reply_markup=kb)
     return await update_or_query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
@@ -801,13 +841,6 @@ def build_main_header(user, u, data=None):
     )
 
 
-def _clean_session_code(val):
-    if val is None:
-        return None
-    s = str(val).strip().lstrip("#")
-    return s if s else None
-
-
 def _resolve_session_pair(raw_prev, raw_pred, shift=-1):
     prev_s = _clean_session_code(raw_prev)
     pred_s = _clean_session_code(raw_pred)
@@ -855,10 +888,7 @@ async def fetch_api_data(api_url, tool_type):
             raw_pred = d.get("Phien_du_doan") or d.get("phien_du_doan") or d.get("phien_ke_tiep")
             prev_s, pred_s = _resolve_session_pair(raw_prev, raw_pred, shift=0)
             live_kq = _normalize_kq(
-                d.get("ket_qua")
-                or d.get("Ket_qua")
-                or d.get("ket_qua_phien")
-                or d.get("Du_doan_hien_tai")
+                d.get("ket_qua") or d.get("Ket_qua") or d.get("ket_qua_phien") or d.get("Du_doan_hien_tai")
             )
             api_history = _parse_api_history_items(d)
             direct_50 = _extract_direct_50_counts(d)
@@ -868,8 +898,7 @@ async def fetch_api_data(api_url, tool_type):
                 "pred": _normalize_pred(d.get("Du_doan") or d.get("du_doan")),
                 "dice": (
                     f"{d.get('Xuc_xac1')}-{d.get('Xuc_xac2')}-{d.get('Xuc_xac3')}"
-                    if d.get("Xuc_xac1")
-                    else None
+                    if d.get("Xuc_xac1") else None
                 ),
                 "total": d.get("Tong") or d.get("tong_diem"),
                 "rate": d.get("ty_le_thang", "89.2%"),
@@ -953,8 +982,7 @@ def get_auto_keyboard(api_key):
 
 async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
     s_key = _session_key(user_id, api_key)
-    full_game_name = GAME_MAP_NAME.get(api_key, api_key.upper())
-    t_icon = _table_emoji(api_key)
+    last_rendered = None
 
     try:
         while s_key in AUTO_SESSIONS:
@@ -967,11 +995,8 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                 await asyncio.sleep(3.5)
                 continue
 
-            # Đồng bộ lịch sử phiên thắng / sai từ API vào cửa sổ 50 phiên
             win_50, lose_50, total_50 = sync_api_history_50(
-                api_key,
-                api_items=res.get("api_history"),
-                direct_counts=res.get("direct_50"),
+                api_key, api_items=res.get("api_history"), direct_counts=res.get("direct_50"),
             )
             st["win"] = win_50
             st["lose"] = lose_50
@@ -992,16 +1017,13 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                     st["lose"] = lose_50
                     st["total_50"] = total_50
 
-            settled_notice = None
+            settled_notice = st.get("last_status_text")
             active_phien = st.get("active_session")
             active_pred = st.get("active_pred")
 
             if (
-                active_phien
-                and active_pred
-                and live_phien == active_phien
-                and live_kq
-                and live_kq != st.get("baseline_kq_for_active")
+                active_phien and active_pred and live_phien == active_phien
+                and live_kq and live_kq != st.get("baseline_kq_for_active")
             ):
                 is_win = active_pred == live_kq.upper()
                 record_result(api_key, active_phien, live_kq, pred=active_pred)
@@ -1017,36 +1039,9 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
 
                 if is_win:
                     settled_notice = f"{E_WIN} <b>PHIÊN #{active_phien}: THẮNG</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
-                    try:
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=(
-                                f"{E_WIN} <b>ĐOÁN ĐÚNG PHIÊN #{active_phien} — THẮNG</b> {E_PARTY}\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"{E_GAME} Bàn: <b>{full_game_name}</b> {t_icon}\n"
-                                f"{E_FIRE} Chốt cầu: <code>{active_pred}</code> — Kết quả: <b>{live_kq}</b>\n"
-                                f"{E_MON} Thống kê ({total_50}/50 phiên): {E_WIN} <b>{win_50} THẮNG</b> | {E_LOSE} <b>{lose_50} THUA</b>"
-                            ),
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
                 else:
                     settled_notice = f"{E_LOSE} <b>PHIÊN #{active_phien}: THUA</b> (Chốt <code>{active_pred}</code> / Ra <b>{live_kq}</b>)"
-                    try:
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=(
-                                f"{E_LOSE} <b>PHIÊN #{active_phien} — THUA</b> {E_ALERT}\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"{E_GAME} Bàn: <b>{full_game_name}</b> {t_icon}\n"
-                                f"{E_FIRE} Chốt cầu: <code>{active_pred}</code> — Kết quả: <b>{live_kq}</b>\n"
-                                f"{E_MON} Thống kê ({total_50}/50 phiên): {E_WIN} <b>{win_50} THẮNG</b> | {E_LOSE} <b>{lose_50} THUA</b>"
-                            ),
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
+                st["last_status_text"] = settled_notice
 
                 st["active_session"] = None
                 st["active_pred"] = None
@@ -1067,56 +1062,17 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
                         u_rec["analysis_count"] = u_rec.get("analysis_count", 0) + 1
                         save_datakey(d_now)
 
-                msg_text = build_auto_analysis_message(
-                    api_key,
-                    res,
-                    st.get("win", 0),
-                    st.get("lose", 0),
-                    total_50=st.get("total_50", 0),
-                    last_status_text=settled_notice,
-                )
+            msg_text = build_auto_analysis_message(
+                api_key, res, st.get("win", 0), st.get("lose", 0),
+                total_50=st.get("total_50", 0), last_status_text=settled_notice,
+            )
+            if msg_text != last_rendered:
                 try:
                     await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=msg_text,
-                        parse_mode="HTML",
-                        reply_markup=get_auto_keyboard(api_key),
+                        chat_id=chat_id, message_id=message_id, text=msg_text,
+                        parse_mode="HTML", reply_markup=get_auto_keyboard(api_key),
                     )
-                except Exception:
-                    pass
-
-                try:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=(
-                            f"{E_BELL} <b>DỰ ĐOÁN MỚI — PHIÊN #{pred_session}</b> {t_icon}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"{E_GEAR} Bàn: <b>{full_game_name}</b> {E_DICE3D}\n"
-                            f"{E_CAL} Chốt cầu: <code>{pred_choice}</code> — Tỉ lệ: <code>{res.get('rate') or '89.2%'}</code>\n"
-                            f"{E_FIRE} Thống kê ({st.get('total_50', 0)}/50 phiên): {E_WIN} <b>{st.get('win', 0)} THẮNG</b> | {E_LOSE} <b>{st.get('lose', 0)} THUA</b>"
-                        ),
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
-            elif settled_notice:
-                msg_text = build_auto_analysis_message(
-                    api_key,
-                    res,
-                    st.get("win", 0),
-                    st.get("lose", 0),
-                    total_50=st.get("total_50", 0),
-                    last_status_text=settled_notice,
-                )
-                try:
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=msg_text,
-                        parse_mode="HTML",
-                        reply_markup=get_auto_keyboard(api_key),
-                    )
+                    last_rendered = msg_text
                 except Exception:
                     pass
 
@@ -1146,10 +1102,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- ADMIN COMMANDS ---
-# *key admin: /key <giá_trị> <m|h|d> [số_thiết_bị]*
-#  ví dụ: /key 30 m 1  -> key 30 phút, tối đa 1 thiết bị
-#         /key 1 h 3   -> key 1 giờ, tối đa 3 thiết bị
-#         /key 3 d 2   -> key 3 ngày, tối đa 2 thiết bị
 async def handle_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_datakey()
     if not is_admin(update.effective_user.id, data):
@@ -1256,8 +1208,8 @@ async def _approve_deposit_core(bot, data, req_id, amount, reviewer_id=None):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{E_MAIL} Tài khoản: <code>{acc_name}</code> (<code>{masked_uid}</code>)\n"
         f"{E_BANK} Số tiền: <code>+{int(amount):,}đ</code>\n"
-        f"{E_BELL} Mã đơn: <tg-spoiler>DEP_{req_key}</tg-spoiler>\n"
-        f"{E_CART} Hình thức: <b>Bank</b>\n"
+        f"{E_BELL} Mã đơn: <tg-spoiler>FZ{req_key}</tg-spoiler>\n"
+        f"{E_CART} Hình thức: <b>Bank Auto</b>\n"
         f"{E_CLOVER} Thời gian: <code>{now_str}</code>\n"
         f"{E_BOLT} Trạng thái: <b>Đã xử lí</b>",
         button_text="Mở Bot",
@@ -1268,7 +1220,7 @@ async def _approve_deposit_core(bot, data, req_id, amount, reviewer_id=None):
         await bot.send_message(
             int(uid_str),
             f"{E_PARTY} <b>NẠP TIỀN THÀNH CÔNG</b> {E_MONEY}\n"
-            f"{E_PIN} Mã đơn: <code>#{req_key}</code>\n"
+            f"{E_PIN} Mã đơn: <code>#FZ{req_key}</code>\n"
             f"{E_CASH} Cộng ví: <code>+{int(amount):,}đ</code>\n"
             f"{E_CROWN} Số dư hiện tại: <code>{u_info['balance']:,}đ</code>",
             parse_mode="HTML",
@@ -1381,10 +1333,6 @@ def build_stats_text(data=None):
 
 
 async def build_check_game_report():
-    """
-    Quét đồng thời tất cả game/bàn từ API, đồng bộ lịch sử 50 phiên gần nhất,
-    xếp hạng theo số phiên đúng / tỉ lệ thắng cao nhất.
-    """
     tasks = [fetch_api_data(url, gkey) for gkey, url in API_URLS.items()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1392,9 +1340,7 @@ async def build_check_game_report():
     for (gkey, _), res in zip(API_URLS.items(), results):
         if isinstance(res, dict) and res:
             w, l, total = sync_api_history_50(
-                gkey,
-                api_items=res.get("api_history"),
-                direct_counts=res.get("direct_50"),
+                gkey, api_items=res.get("api_history"), direct_counts=res.get("direct_50"),
             )
             online = True
         else:
@@ -1431,7 +1377,7 @@ async def build_check_game_report():
         t_icon = _table_emoji(r["key"])
         if r["total"] > 0:
             pct_str = f"{r['pct']:.1f}%"
-            stat_part = f"{E_WIN} <code>{r['win']}</code> Đúng | {E_LOSE} <code>{r['lose']}</code> Sai ({r['total']}/50 — <code>{pct_str}</code>)"
+            stat_part = f"{E_WIN} <code>{r['win']}</code> Đúng | {E_LOSE} <code>{r['lose']}</code> Sai (<code>{pct_str}</code>)"
         else:
             status_tag = "Online — chưa có lịch sử 50p" if r["online"] else "API offline"
             stat_part = f"{E_SPIN} <i>{status_tag}</i>"
@@ -1446,22 +1392,23 @@ def get_main_inline_keyboard(user_id, data=None):
     kb = [
         [InlineKeyboardButton("Danh Sách Game VIP", callback_data="menu_games", api_kwargs=btn_icon("game"))],
         [
+            InlineKeyboardButton("Check Game (50p)", callback_data="user_checkgame", api_kwargs=btn_icon("fire")),
             InlineKeyboardButton("Hồ Sơ Cá Nhân", callback_data="menu_profile", api_kwargs=btn_icon("clip")),
+        ],
+        [
             InlineKeyboardButton("Mua Gói Key VIP", callback_data="menu_buykey", api_kwargs=btn_icon("bag")),
-        ],
-        [
             InlineKeyboardButton("Get Key Free 30p", callback_data="menu_freekey", api_kwargs=btn_icon("gift")),
+        ],
+        [
             InlineKeyboardButton("Kích Hoạt Key", callback_data="menu_activate", api_kwargs=btn_icon("crown")),
-        ],
-        [
             InlineKeyboardButton("Nạp Tiền Ví", callback_data="menu_deposit", api_kwargs=btn_icon("money")),
+        ],
+        [
             InlineKeyboardButton("Nhập Giftcode", callback_data="menu_giftcode", api_kwargs=btn_icon("party")),
-        ],
-        [
             InlineKeyboardButton("Lịch Sử Mua KEY", callback_data="menu_history", api_kwargs=btn_icon("calendar")),
-            InlineKeyboardButton("Hỗ Trợ Khác", callback_data="menu_support", api_kwargs=btn_icon("net")),
         ],
         [
+            InlineKeyboardButton("Hỗ Trợ Khác", callback_data="menu_support", api_kwargs=btn_icon("net")),
             InlineKeyboardButton("Feedback Tool", callback_data="menu_feedback", api_kwargs=btn_icon("bell")),
         ],
     ]
@@ -1484,47 +1431,45 @@ def get_game_inline_keyboard():
             InlineKeyboardButton("LC79", callback_data="game_LC79", api_kwargs=btn_icon("lc79_logo")),
             InlineKeyboardButton("XOCDIA88", callback_data="game_XD88", api_kwargs=btn_icon("xd88_logo")),
         ],
+        [
+            InlineKeyboardButton("GAME 68", callback_data="game_GAME68", api_kwargs=btn_icon("game68")),
+            InlineKeyboardButton("MAX789", callback_data="game_MAX789", api_kwargs=btn_icon("club789")),
+        ],
         [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
     ])
 
 
 def get_sub_inline_keyboard(game):
     menus = {
-        "SUNWIN": [
-            [
-                InlineKeyboardButton("SUNWIN TÀI XỈU", callback_data="run_sun_tx", api_kwargs=btn_icon("table_tx")),
-            ]
-        ],
-        "HITCLUB": [
-            [
-                InlineKeyboardButton("HIT TÀI XỈU", callback_data="run_hit_tx", api_kwargs=btn_icon("table_tx")),
-                InlineKeyboardButton("HIT MD5", callback_data="run_hit_md5", api_kwargs=btn_icon("table_md5")),
-            ],
-        ],
-        "B52": [
-            [
-                InlineKeyboardButton("B52 TÀI XỈU", callback_data="run_b52_tx", api_kwargs=btn_icon("table_tx")),
-                InlineKeyboardButton("B52 MD5", callback_data="run_b52_md5", api_kwargs=btn_icon("table_md5")),
-            ],
-        ],
-        "BETVIP": [
-            [
-                InlineKeyboardButton("BETVIP TÀI XỈU", callback_data="run_betvip_tx", api_kwargs=btn_icon("table_tx")),
-                InlineKeyboardButton("BETVIP MD5", callback_data="run_betvip_md5", api_kwargs=btn_icon("table_md5")),
-            ]
-        ],
-        "LC79": [
-            [
-                InlineKeyboardButton("LC79 TÀI XỈU", callback_data="run_lc79_tx", api_kwargs=btn_icon("table_tx")),
-                InlineKeyboardButton("LC79 MD5", callback_data="run_lc79_md5", api_kwargs=btn_icon("table_md5")),
-            ]
-        ],
-        "XD88": [
-            [
-                InlineKeyboardButton("XD88 TÀI XỈU", callback_data="run_xd88_tx", api_kwargs=btn_icon("table_tx")),
-                InlineKeyboardButton("XD88 MD5", callback_data="run_xd88_md5", api_kwargs=btn_icon("table_md5")),
-            ]
-        ],
+        "SUNWIN": [[InlineKeyboardButton("SUNWIN TÀI XỈU", callback_data="run_sun_tx", api_kwargs=btn_icon("table_tx"))]],
+        "HITCLUB": [[
+            InlineKeyboardButton("HIT TÀI XỈU", callback_data="run_hit_tx", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("HIT MD5", callback_data="run_hit_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
+        "B52": [[
+            InlineKeyboardButton("B52 TÀI XỈU", callback_data="run_b52_tx", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("B52 MD5", callback_data="run_b52_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
+        "BETVIP": [[
+            InlineKeyboardButton("BETVIP TÀI XỈU", callback_data="run_betvip_tx", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("BETVIP MD5", callback_data="run_betvip_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
+        "LC79": [[
+            InlineKeyboardButton("LC79 TÀI XỈU", callback_data="run_lc79_tx", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("LC79 MD5", callback_data="run_lc79_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
+        "XD88": [[
+            InlineKeyboardButton("XD88 TÀI XỈU", callback_data="run_xd88_tx", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("XD88 MD5", callback_data="run_xd88_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
+        "GAME68": [[
+            InlineKeyboardButton("68 HŨ", callback_data="run_g68_hu", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("68 MD5", callback_data="run_g68_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
+        "MAX789": [[
+            InlineKeyboardButton("MAX789 TÀI XỈU", callback_data="run_max789_tx", api_kwargs=btn_icon("table_tx")),
+            InlineKeyboardButton("MAX789 MD5", callback_data="run_max789_md5", api_kwargs=btn_icon("table_md5")),
+        ]],
     }
     kb = [row[:] for row in menus.get(game, [])]
     kb.append([InlineKeyboardButton("Quay Lại", callback_data="menu_games", api_kwargs=btn_icon("down"))])
@@ -1559,8 +1504,8 @@ def get_back_keyboard(target="menu_back", label="Quay Lại"):
 
 def get_deposit_keyboard(req_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Tôi Đã Chuyển Khoản", callback_data=f"dep_sent:{req_id}", api_kwargs=btn_icon("check"))],
-        [InlineKeyboardButton("Hủy Yêu Cầu Nạp", callback_data=f"dep_cancel:{req_id}", api_kwargs=btn_icon("cross"))],
+        [InlineKeyboardButton("Đã Chuyển Khoản", callback_data=f"dep_done:{req_id}", api_kwargs=btn_icon("check"))],
+        [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
     ])
 
 
@@ -1591,11 +1536,8 @@ async def send_photos_to_admins(bot, data, photo_file_ids, caption, reply_markup
         try:
             if len(photo_file_ids) == 1:
                 await bot.send_photo(
-                    chat_id=aid,
-                    photo=photo_file_ids[0],
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
+                    chat_id=aid, photo=photo_file_ids[0], caption=caption,
+                    parse_mode="HTML", reply_markup=reply_markup,
                 )
             else:
                 for c_idx, chunk in enumerate(chunks):
@@ -1610,8 +1552,7 @@ async def send_photos_to_admins(bot, data, photo_file_ids, caption, reply_markup
                     await bot.send_message(
                         chat_id=aid,
                         text=f"{E_CROWN} <b>Thao tác xử lý ({len(photo_file_ids)} ảnh)</b> {E_GEAR}",
-                        parse_mode="HTML",
-                        reply_markup=reply_markup,
+                        parse_mode="HTML", reply_markup=reply_markup,
                     )
         except Exception as e:
             logging.warning("Send photos to admin %s failed: %s", aid, e)
@@ -1636,16 +1577,9 @@ def issue_free_30m_key(uid_str, data):
     key = "".join(random.choices(string.ascii_uppercase + string.digits, k=15))
     now = get_hanoi_time()
     data.setdefault("keys", {})[key] = {
-        "days": 0,
-        "hours": 0,
-        "minutes": 30,
-        "used": False,
-        "created_at": now.isoformat(),
-        "used_by": None,
-        "free_key": True,
-        "claimed_by": uid_str,
-        "max_devices": 1,
-        "devices": [],
+        "days": 0, "hours": 0, "minutes": 30,
+        "used": False, "created_at": now.isoformat(), "used_by": None,
+        "free_key": True, "claimed_by": uid_str, "max_devices": 1, "devices": [],
     }
     data.setdefault("free_key_claims", {})[uid_str] = now.isoformat()
     save_datakey(data)
@@ -1660,21 +1594,15 @@ async def submit_freekey_photos_for_review(bot, chat_id, user, uid_str, photo_fi
             return await bot.send_message(
                 chat_id=chat_id,
                 text=f"{E_CROSS} Đã nhận Key Free 30p hôm nay — lượt kế: <code>{next_dt.strftime('%d/%m/%Y %H:%M')}</code> {E_BELL}",
-                parse_mode="HTML",
-                reply_markup=get_main_inline_keyboard(user.id, data),
+                parse_mode="HTML", reply_markup=get_main_inline_keyboard(user.id, data),
             )
 
         req_id = next_freekey_id(data)
         now_iso = get_hanoi_time().isoformat()
         data.setdefault("free_key_requests", {})[str(req_id)] = {
-            "user_id": uid_str,
-            "username": user.username or "",
-            "first_name": user.first_name or "",
-            "photo_file_ids": photo_file_ids,
-            "photo_file_id": photo_file_ids[0],
-            "note": note,
-            "status": "awaiting_admin",
-            "created_at": now_iso,
+            "user_id": uid_str, "username": user.username or "", "first_name": user.first_name or "",
+            "photo_file_ids": photo_file_ids, "photo_file_id": photo_file_ids[0],
+            "note": note, "status": "awaiting_admin", "created_at": now_iso,
         }
         save_datakey(data)
 
@@ -1687,11 +1615,7 @@ async def submit_freekey_photos_for_review(bot, chat_id, user, uid_str, photo_fi
         f"{E_PIN} Số ảnh: <b>{len(photo_file_ids)}</b> — Rải <code>{FREE_KEY_BOT}</code> tối thiểu 3 box{note_line}"
     )
     await send_photos_to_admins(
-        bot,
-        data,
-        photo_file_ids,
-        admin_caption,
-        reply_markup=get_admin_freekey_keyboard(req_id),
+        bot, data, photo_file_ids, admin_caption, reply_markup=get_admin_freekey_keyboard(req_id),
     )
 
     return await bot.send_message(
@@ -1702,8 +1626,7 @@ async def submit_freekey_photos_for_review(bot, chat_id, user, uid_str, photo_fi
             f"{E_PIN} Mã đơn: <code>#{req_id}</code>\n"
             f"{E_CROWN} Duyệt xong bot gửi thẳng <b>Key Free 30p</b> cho bạn."
         ),
-        parse_mode="HTML",
-        reply_markup=get_main_inline_keyboard(user.id, data),
+        parse_mode="HTML", reply_markup=get_main_inline_keyboard(user.id, data),
     )
 
 
@@ -1730,10 +1653,7 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
             req["reviewed_by"] = reviewer_id
             save_datakey(data)
             msg_done = f"{E_CROSS} <b>Đã từ chối đơn Key Free 30p #{req_key}</b> (Khách: <code>{uid_str}</code>)."
-            try:
-                await q.edit_message_caption(caption=msg_done, parse_mode="HTML")
-            except Exception:
-                await q.edit_message_text(text=msg_done, parse_mode="HTML")
+            await safe_edit_or_send(q, msg_done)
             try:
                 await context.bot.send_message(
                     int(uid_str),
@@ -1778,8 +1698,7 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
                 f"{E_BANK} Mã key: <tg-spoiler>{masked_key}</tg-spoiler>\n"
                 f"{E_CLOVER} Thời gian: <code>{now_str}</code>\n"
                 f"{E_BOLT} Trạng thái: <b>Đã xử lí</b>",
-                button_text="Mở Bot",
-                icon_key="bolt",
+                button_text="Mở Bot", icon_key="bolt",
             )
 
             msg_done = (
@@ -1787,10 +1706,7 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
                 f"{E_PIN} Khách: <code>{uid_str}</code>\n"
                 f"{E_GIFT} Key 30p: <code>{key}</code>"
             )
-            try:
-                await q.edit_message_caption(caption=msg_done, parse_mode="HTML")
-            except Exception:
-                await q.edit_message_text(text=msg_done, parse_mode="HTML")
+            await safe_edit_or_send(q, msg_done)
             try:
                 await context.bot.send_message(
                     int(uid_str),
@@ -1806,16 +1722,356 @@ async def handle_admin_freekey_callback(update, context, action, req_id):
                 pass
 
 
-# --- DEPOSIT FLOW ---
-async def open_deposit(chat_id, user, context):
+# --- DEPOSIT & VIETQR + APIBANK AUTO VERIFY ---
+def _tlv(tag, val):
+    return f"{tag}{len(val):02d}{val}"
+
+
+def _crc16_ccitt(data_bytes):
+    crc = 0xFFFF
+    for b in data_bytes:
+        crc ^= b << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return f"{crc:04X}"
+
+
+def build_emvco_vietqr_payload(bank_id, account_no, amount, memo):
+    bin_code = BANK_BIN_MAP.get(str(bank_id).upper().strip(), str(bank_id).strip())
+    acc_clean = str(account_no).strip()
+    amt_str = str(int(amount))
+    memo_clean = re.sub(r"[^A-Za-z0-9 ]", "", str(memo)).strip()[:25]
+
+    beneficiary_info = _tlv("00", bin_code) + _tlv("01", acc_clean)
+    merchant_acc_info = _tlv("00", "A000000727") + _tlv("01", beneficiary_info) + _tlv("02", "QRIBFTTA")
+    additional_data = _tlv("08", memo_clean)
+
+    raw_payload = (
+        _tlv("00", "01")
+        + _tlv("01", "12")
+        + _tlv("38", merchant_acc_info)
+        + _tlv("53", "704")
+        + _tlv("54", amt_str)
+        + _tlv("58", "VN")
+        + _tlv("62", additional_data)
+        + "6304"
+    )
+    return raw_payload + _crc16_ccitt(raw_payload.encode("utf-8"))
+
+
+def render_local_vietqr_png(bank_id, account_no, amount, memo):
+    if not HAS_LOCAL_QR:
+        raise RuntimeError("Thiếu thư viện qrcode/pillow (chạy: pip install qrcode[pil] pillow)")
+    payload = build_emvco_vietqr_payload(bank_id, account_no, amount, memo)
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(payload)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _normalize_to_png_bytes(raw_bytes):
+    if HAS_LOCAL_QR:
+        img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+    return raw_bytes
+
+
+def build_vietqr_image_url(amount, memo):
+    query = urlencode({
+        "amount": int(amount),
+        "addInfo": str(memo),
+        "accountName": str(VIETQR_ACCOUNT_NAME),
+    })
+    return f"https://img.vietqr.io/image/{VIETQR_BANK_ID}-{VIETQR_ACCOUNT_NO}-{VIETQR_TEMPLATE}.png?{query}"
+
+
+async def download_vietqr_bytes(amount, memo):
+    qr_url = build_vietqr_image_url(amount, memo)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "image/png,image/jpeg,image/webp,*/*",
+        "Referer": "https://vietqr.io/",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=False, headers=headers) as client:
+            r = await client.get(qr_url)
+            if r.status_code == 200 and len(r.content) > 500:
+                ctype = r.headers.get("content-type", "").lower()
+                if "svg" not in ctype and "html" not in ctype:
+                    return _normalize_to_png_bytes(r.content), qr_url
+
+            acq_id = BANK_BIN_MAP.get(VIETQR_BANK_ID.upper(), VIETQR_BANK_ID)
+            payload = {
+                "accountNo": str(VIETQR_ACCOUNT_NO),
+                "accountName": str(VIETQR_ACCOUNT_NAME),
+                "acqId": int(acq_id) if str(acq_id).isdigit() else acq_id,
+                "amount": int(amount),
+                "addInfo": str(memo),
+                "template": VIETQR_TEMPLATE,
+            }
+            api_r = await client.post("https://api.vietqr.io/v2/generate", json=payload)
+            if api_r.status_code == 200:
+                j = api_r.json()
+                data_url = (j.get("data") or {}).get("qrDataURL") or ""
+                if "base64," in data_url:
+                    b64_str = data_url.split("base64,", 1)[1]
+                    return _normalize_to_png_bytes(base64.b64decode(b64_str)), qr_url
+    except Exception as e:
+        logging.warning("VietQR remote fetch failed (%s), using local EMVCo QR: %s", qr_url, e)
+
+    local_png = render_local_vietqr_png(VIETQR_BANK_ID, VIETQR_ACCOUNT_NO, amount, memo)
+    return local_png, qr_url
+
+
+def _parse_bank_amount(val):
+    if val is None or isinstance(val, bool):
+        return 0
+    if isinstance(val, (int, float)):
+        return int(round(val))
+    s = str(val).strip()
+    if not s:
+        return 0
+    m = re.search(r"[-+]?\d[\d,\.]*", s)
+    if not m:
+        return 0
+    num_str = m.group(0)
+    if "," in num_str and "." in num_str:
+        if num_str.rfind(",") > num_str.rfind("."):
+            num_str = num_str.replace(".", "").replace(",", ".")
+        else:
+            num_str = num_str.replace(",", "")
+    elif "," in num_str:
+        parts = num_str.split(",")
+        if len(parts[-1]) == 3 and all(len(p) <= 3 for p in parts[1:]):
+            num_str = num_str.replace(",", "")
+        else:
+            num_str = num_str.replace(",", ".")
+    elif "." in num_str:
+        parts = num_str.split(".")
+        if len(parts[-1]) == 3 and all(len(p) <= 3 for p in parts[1:]):
+            num_str = num_str.replace(".", "")
+    try:
+        return int(round(float(num_str)))
+    except ValueError:
+        digits = re.sub(r"[^\d]", "", num_str)
+        return int(digits) if digits else 0
+
+
+def _collect_tx_dicts(obj, out, depth=0):
+    if depth > 5 or obj is None:
+        return
+    if isinstance(obj, list):
+        if obj and all(isinstance(x, dict) for x in obj):
+            out.extend(obj)
+            return
+        for item in obj:
+            _collect_tx_dicts(item, out, depth + 1)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                _collect_tx_dicts(v, out, depth + 1)
+
+
+def _extract_bank_transactions(raw):
+    found = []
+    _collect_tx_dicts(raw, found, depth=0)
+    dedup = []
+    seen = set()
+    for tx in found:
+        sig = json.dumps(tx, sort_keys=True, ensure_ascii=False)
+        if sig not in seen:
+            seen.add(sig)
+            dedup.append(tx)
+    return dedup
+
+
+def _extract_tx_description(tx):
+    parts = []
+    for k, val in tx.items():
+        kl = str(k).lower()
+        if any(
+            w in kl
+            for w in (
+                "desc", "content", "noi_dung", "comment", "memo",
+                "remark", "narration", "detail", "note", "msg", "text", "body",
+            )
+        ):
+            if isinstance(val, (str, int, float)):
+                parts.append(str(val))
+    return " ".join(parts).upper()
+
+
+def _extract_tx_amount(tx):
+    priority_keys = (
+        "amount", "creditamount", "credit_amount", "so_tien", "money",
+        "tien_vao", "in_amount", "value", "total", "price",
+    )
+    for pk in priority_keys:
+        for k, v in tx.items():
+            if str(k).lower() == pk and v is not None:
+                amt = _parse_bank_amount(v)
+                if amt > 0:
+                    return amt
+    for k, v in tx.items():
+        kl = str(k).lower()
+        if any(w in kl for w in ("amount", "tien", "money", "value")) and "balance" not in kl and "so_du" not in kl:
+            amt = _parse_bank_amount(v)
+            if amt > 0:
+                return amt
+    return 0
+
+
+def _memo_matches_desc(memo, desc):
+    memo_u = re.sub(r"[^A-Z0-9]", "", str(memo).upper())
+    desc_compact = re.sub(r"[^A-Z0-9]", "", str(desc).upper())
+    if not memo_u or not desc_compact:
+        return False
+    if memo_u in desc_compact:
+        return True
+    m = re.match(r"^([A-Z]+)(\d+)$", memo_u)
+    if m:
+        prefix, num = m.group(1), m.group(2)
+        pattern = rf"{re.escape(prefix)}[\s_\-:/#]*0*{re.escape(num)}(?!\d)"
+        if re.search(pattern, str(desc).upper()):
+            return True
+    return False
+
+
+async def scan_bank_and_approve(bot, target_req_id=None):
+    """Quét APIBANK_URL và duyệt đơn ngay khi khớp đúng nội dung + số tiền."""
+    if not APIBANK_URL:
+        return None, "Chưa cấu hình APIBANK_URL."
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=False) as client:
+            r = await client.get(APIBANK_URL)
+    except Exception as e:
+        logging.warning("scan_bank_and_approve request failed: %s", e)
+        return None, f"Lỗi gọi API Bank: {e}"
+
+    if r.status_code != 200:
+        logging.warning("APIBANK_URL HTTP %s: %s", r.status_code, r.text[:300])
+        return None, f"API Bank lỗi HTTP {r.status_code}."
+
+    try:
+        payload = r.json()
+    except Exception as e:
+        logging.warning("APIBANK_URL invalid JSON (%s): %s", e, r.text[:300])
+        return None, f"API Bank không trả JSON hợp lệ."
+
+    txs = _extract_bank_transactions(payload)
+    if not txs:
+        logging.info("APIBANK_URL returned 0 tx items. Raw snippet: %s", str(payload)[:400])
+        return None, "Chưa thấy giao dịch nào từ API Bank."
+
+    async with DATA_LOCK:
+        data = load_datakey()
+        all_pending = {
+            k: v
+            for k, v in data.get("deposit_requests", {}).items()
+            if v.get("status") == "pending" and int(v.get("expected_amount", 0)) > 0
+        }
+        if not all_pending:
+            return None, "Không có đơn nạp nào đang chờ duyệt."
+
+        if target_req_id is not None:
+            t_key = str(target_req_id)
+            if t_key not in all_pending:
+                cur_st = data.get("deposit_requests", {}).get(t_key, {}).get("status", "unknown")
+                return None, f"Đơn #{t_key} trạng thái: {cur_st}."
+            pending_reqs = {t_key: all_pending[t_key]}
+        else:
+            pending_reqs = all_pending
+
+        processed_set = set(str(x) for x in data.get("processed_tx_ids", []))
+
+        for tx in txs:
+            amt = _extract_tx_amount(tx)
+            desc = _extract_tx_description(tx)
+            if amt <= 0 or not desc:
+                continue
+
+            raw_tx_id = (
+                tx.get("id")
+                or tx.get("transactionID")
+                or tx.get("refNo")
+                or tx.get("ma_gd")
+                or tx.get("transId")
+                or tx.get("tid")
+            )
+            fallback_id = f"tx_{amt}_{re.sub(r'[^A-Z0-9]', '', desc)[:40]}"
+            tx_id = str(raw_tx_id) if raw_tx_id not in (None, "") else fallback_id
+
+            for req_k, req_v in pending_reqs.items():
+                memo = str(req_v.get("memo") or f"FZ{req_k}").upper()
+                expected_amt = int(req_v.get("expected_amount", 0))
+
+                # Chỉ bỏ qua tx_id đã dùng nếu đơn đó không còn pending
+                if tx_id in processed_set and req_v.get("status") != "pending":
+                    continue
+
+                if _memo_matches_desc(memo, desc) and amt == expected_amt:
+                    processed_set.add(tx_id)
+                    data["processed_tx_ids"] = list(processed_set)[-1000:]
+                    save_datakey(data)
+                    ok, _ = await _approve_deposit_core(bot, data, req_k, amt, reviewer_id=None)
+                    if ok:
+                        return req_k, f"Khớp nội dung {memo} và số tiền {amt:,}đ!"
+
+        if target_req_id is not None:
+            t_v = pending_reqs.get(str(target_req_id))
+            if t_v:
+                memo = str(t_v.get("memo") or f"FZ{target_req_id}").upper()
+                exp_a = int(t_v.get("expected_amount", 0))
+                sample_txs = [
+                    f"{_extract_tx_amount(x):,}đ | {_extract_tx_description(x)[:35]}"
+                    for x in txs[:3]
+                ]
+                logging.info(
+                    "No match for req #%s (memo=%s, amt=%s). Sample bank txs: %s",
+                    target_req_id, memo, exp_a, sample_txs,
+                )
+                return None, f"Chưa thấy giao dịch đúng nội dung {memo} và số tiền {exp_a:,}đ."
+
+    return None, "Chưa có giao dịch khớp nội dung và số tiền."
+
+
+async def apibank_auto_verify_worker(bot):
+    while True:
+        try:
+            await scan_bank_and_approve(bot, target_req_id=None)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logging.warning("apibank_auto_verify_worker error: %s", e)
+
+        await asyncio.sleep(3.0)
+
+
+async def send_vietqr_deposit_card(chat_id, user, context, amount):
     async with DATA_LOCK:
         data = load_datakey()
         uid = ensure_user(data, user)
         req_id = next_request_id(data)
+        memo = f"FZ{req_id}"
         data.setdefault("deposit_requests", {})[str(req_id)] = {
             "user_id": uid,
             "username": user.username or "",
             "first_name": user.first_name or "",
+            "expected_amount": int(amount),
+            "memo": memo,
             "status": "pending",
             "created_at": get_hanoi_time().isoformat(),
             "approved_at": None,
@@ -1824,79 +2080,76 @@ async def open_deposit(chat_id, user, context):
         save_datakey(data)
 
     caption = (
-        f"{E_MONEY} <b>CỔNG NẠP TIỀN VÍ</b> {E_CASH}\n"
+        f"{E_MONEY} <b>CỔNG NẠP TIỀN TỰ ĐỘNG (VIETQR)</b> {E_CASH}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{E_PIN} Mã đơn: <code>#{req_id}</code>\n"
-        f"{E_CROWN} 1. Quét QR chuyển khoản.\n"
-        f"{E_CASH} 2. Nội dung CK: <code>NAP{req_id}</code>\n"
-        f"{E_CHECK} 3. Bấm <b>Tôi Đã Chuyển Khoản</b> để gửi đơn duyệt.\n"
-        f"{E_BELL} <i>Xử lý nhanh 1-3 phút.</i>"
+        f"{E_BANK} Ngân hàng: <b>{VIETQR_BANK_ID}</b> — STK: <code>{VIETQR_ACCOUNT_NO}</code>\n"
+        f"{E_CROWN} Chủ TK: <b>{VIETQR_ACCOUNT_NAME}</b>\n"
+        f"{E_CASH} Số tiền: <code>{int(amount):,}đ</code>\n"
+        f"{E_CLIP} Nội dung CK: <code>{memo}</code>\n"
+        f"{E_CHECK} Chuyển khoản xong bấm <b>Đã Chuyển Khoản</b> (hoặc chờ bot tự duyệt)."
     )
-    await context.bot.send_photo(
-        chat_id=chat_id,
-        photo=QR_URL,
-        caption=caption,
-        parse_mode="HTML",
-        reply_markup=get_deposit_keyboard(req_id),
-    )
+
+    try:
+        qr_bytes, _ = await download_vietqr_bytes(amount, memo)
+        bio = io.BytesIO(qr_bytes)
+        bio.name = f"vietqr_{memo}.png"
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=InputFile(bio, filename=f"vietqr_{memo}.png"),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=get_deposit_keyboard(req_id),
+        )
+    except Exception as e:
+        logging.exception("send_vietqr_deposit_card failed: %s", e)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"{caption}\n\n{E_ALERT} <i>Lỗi tạo ảnh QR ({e}) — vui lòng chuyển khoản đúng thông tin trên.</i>",
+            parse_mode="HTML",
+            reply_markup=get_deposit_keyboard(req_id),
+        )
 
 
 async def handle_deposit_callback(update, context, action, req_id):
     q = update.callback_query
     uid = str(q.from_user.id)
 
-    async with DATA_LOCK:
-        data = load_datakey()
-        req = data.get("deposit_requests", {}).get(str(req_id))
-        if not req:
-            return await q.edit_message_caption(
-                caption=f"{E_CROSS} Đơn nạp không tồn tại.",
-                parse_mode="HTML",
-            )
-        if str(req["user_id"]) != uid:
-            return await q.answer("Đơn này không thuộc tài khoản của bạn!", show_alert=True)
+    data = load_datakey()
+    req = data.get("deposit_requests", {}).get(str(req_id))
+    if not req:
+        return await q.answer("Đơn nạp không tồn tại.", show_alert=True)
+    if str(req["user_id"]) != uid and not is_admin(q.from_user.id, data):
+        return await q.answer("Đơn này không thuộc tài khoản của bạn!", show_alert=True)
 
-        if action == "cancel":
-            if req["status"] == "pending":
-                req["status"] = "cancelled"
-                save_datakey(data)
-            return await q.edit_message_caption(
-                caption=f"{E_CROSS} <b>Đã hủy đơn nạp #{req_id}</b>\n{E_BELL} Gõ /start để về menu chính.",
-                parse_mode="HTML",
+    if action == "done":
+        if req.get("status") == "approved":
+            u_bal = data.get("users", {}).get(uid, {}).get("balance", 0)
+            return await safe_edit_or_send(
+                q,
+                f"{E_PARTY} <b>ĐƠN #{req_id} ĐÃ ĐƯỢC DUYỆT</b> {E_CHECK}\n"
+                f"{E_CASH} Số dư hiện tại: <code>{u_bal:,}đ</code>",
+                reply_markup=get_back_keyboard(),
             )
 
-        if action == "sent":
-            if req["status"] != "pending":
-                return await q.answer("Đơn này đã được gửi hoặc xử lý!", show_alert=True)
-            req["status"] = "awaiting_admin"
-            req["user_confirmed_at"] = get_hanoi_time().isoformat()
-            save_datakey(data)
-
-    await q.edit_message_caption(
-        caption=(
-            f"{E_CHECK} <b>ĐÃ GỬI ĐƠN NẠP #{req_id}</b> {E_MONEY}\n"
-            f"{E_BELL} Chờ Admin xác nhận và cộng ví cho bạn."
-        ),
-        parse_mode="HTML",
-    )
-    recipients = get_admin_recipients(data)
-    dep_text = (
-        f"{E_MONEY} <b>ĐƠN NẠP TIỀN #{req_id}</b> {E_CROWN}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{E_PARTY} Khách: <code>{uid}</code> (@{req['username'] or 'no_username'})\n"
-        f"{E_CLIP} Tên: <b>{req['first_name']}</b>\n"
-        f"{E_CASH} Nội dung CK: <code>NAP{req_id}</code> {E_FIRE}"
-    )
-    for aid in recipients:
-        try:
-            await context.bot.send_message(
-                chat_id=aid,
-                text=dep_text,
-                parse_mode="HTML",
-                reply_markup=get_admin_deposit_keyboard(req_id),
+        matched_id, info_msg = await scan_bank_and_approve(context.bot, target_req_id=req_id)
+        if matched_id:
+            data_after = load_datakey()
+            u_bal = data_after.get("users", {}).get(uid, {}).get("balance", 0)
+            return await safe_edit_or_send(
+                q,
+                f"{E_PARTY} <b>NẠP TIỀN THÀNH CÔNG (ĐƠN #{req_id})</b> {E_MONEY}\n"
+                f"{E_CHECK} {info_msg}\n"
+                f"{E_CROWN} Số dư hiện tại: <code>{u_bal:,}đ</code>",
+                reply_markup=get_back_keyboard(),
             )
-        except Exception:
-            continue
+
+        memo = str(req.get("memo") or f"FZ{req_id}").upper()
+        exp_a = int(req.get("expected_amount", 0))
+        return await q.answer(
+            f"Chưa thấy giao dịch đúng nội dung {memo} và số tiền {exp_a:,}đ. Bấm lại sau vài giây!",
+            show_alert=True,
+        )
 
 
 async def handle_admin_deposit_callback(update, context, action, req_id):
@@ -1920,10 +2173,7 @@ async def handle_admin_deposit_callback(update, context, action, req_id):
             req["approved_at"] = get_hanoi_time().isoformat()
             req["reviewed_by"] = reviewer_id
             save_datakey(data)
-            await q.edit_message_text(
-                text=f"{E_CROSS} <b>Đã từ chối đơn nạp #{req_key}</b>",
-                parse_mode="HTML",
-            )
+            await safe_edit_or_send(q, f"{E_CROSS} <b>Đã từ chối đơn nạp #{req_key}</b>")
             try:
                 await context.bot.send_message(
                     int(req["user_id"]),
@@ -1940,13 +2190,11 @@ async def handle_admin_deposit_callback(update, context, action, req_id):
             pending_map[str(reviewer_id)] = req_key
             context.user_data["admin_approve_req"] = req_key
             context.user_data["waiting_approve_amount"] = True
-            await q.edit_message_text(
-                text=(
-                    f"{E_CHECK} <b>DUYỆT ĐƠN NẠP #{req_key}</b> {E_MONEY}\n"
-                    f"{E_PIN} Khách: <code>{req['user_id']}</code>\n"
-                    f"{E_CASH} Nhập số tiền cần cộng (VD: 50000):"
-                ),
-                parse_mode="HTML",
+            await safe_edit_or_send(
+                q,
+                f"{E_CHECK} <b>DUYỆT ĐƠN NẠP #{req_key}</b> {E_MONEY}\n"
+                f"{E_PIN} Khách: <code>{req['user_id']}</code>\n"
+                f"{E_CASH} Nhập số tiền cần cộng (VD: 50000):",
             )
 
 
@@ -1983,8 +2231,7 @@ async def handle_approve_amount(update, context):
         f"{E_PIN} Khách: <code>{req['user_id']}</code>\n"
         f"{E_MONEY} Cộng: <code>+{amount:,}đ</code>\n"
         f"{E_CASH} Số dư mới: <code>{info:,}đ</code>",
-        parse_mode="HTML",
-        reply_markup=get_admin_inline_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_inline_keyboard(),
     )
 
 
@@ -2021,8 +2268,7 @@ async def forward_feedback_to_admin(bot, chat_id, user, photo_file_ids=None, con
             f"{E_CROWN} Đã chuyển {summary_part} cho Admin.\n"
             f"{E_BELL} Cảm ơn bạn đã góp ý."
         ),
-        parse_mode="HTML",
-        reply_markup=get_main_inline_keyboard(uid, data),
+        parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
     )
 
 
@@ -2070,8 +2316,7 @@ def _schedule_album_debounce(context, chat_id, user, uid_str, group_key, mode):
                         f"{E_CHECK} <b>Đã nhận {len(existing)} ảnh feedback</b> {E_CLIP}\n"
                         f"{E_BELL} Nhập nội dung mô tả hoặc bấm gửi ảnh ngay."
                     ),
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb),
                 )
 
     MEDIA_GROUP_TIMERS[group_key] = asyncio.create_task(_worker())
@@ -2094,9 +2339,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 MEDIA_GROUP_BUFFERS.setdefault(g_key, []).append(photo.file_id)
                 if caption:
                     MEDIA_GROUP_CAPTIONS[g_key] = caption
-                _schedule_album_debounce(
-                    context, update.effective_chat.id, user, uid, g_key, m_name
-                )
+                _schedule_album_debounce(context, update.effective_chat.id, user, uid, g_key, m_name)
                 return
 
     blocked, _ = await enforce_3box_or_block(update, context, user, data, is_callback=False)
@@ -2110,9 +2353,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             MEDIA_GROUP_BUFFERS[group_key] = [photo.file_id]
             if caption:
                 MEDIA_GROUP_CAPTIONS[group_key] = caption
-            _schedule_album_debounce(
-                context, update.effective_chat.id, user, uid, group_key, "freekey"
-            )
+            _schedule_album_debounce(context, update.effective_chat.id, user, uid, group_key, "freekey")
             return
 
         context.user_data.pop("waiting_freekey_photo", None)
@@ -2129,9 +2370,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         MEDIA_GROUP_BUFFERS[group_key] = [photo.file_id]
         if caption:
             MEDIA_GROUP_CAPTIONS[group_key] = caption
-        _schedule_album_debounce(
-            context, update.effective_chat.id, user, uid, group_key, "feedback"
-        )
+        _schedule_album_debounce(context, update.effective_chat.id, user, uid, group_key, "feedback")
         return
 
     if caption:
@@ -2151,8 +2390,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"{E_CHECK} <b>Đã nhận {len(existing_ids)} ảnh feedback</b> {E_CLIP}\n"
         f"{E_BELL} Nhập nội dung mô tả hoặc bấm gửi ảnh ngay.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb),
     )
 
 
@@ -2168,14 +2406,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if blocked:
         return
 
+    if context.user_data.get("waiting_deposit_amount"):
+        try:
+            amount = int(msg.replace(",", "").replace(".", "").replace("đ", "").replace("d", ""))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            return await update.message.reply_text(
+                f"{E_CROSS} Số tiền không hợp lệ — nhập số tiền muốn nạp (VD: <code>30000</code>):",
+                parse_mode="HTML", reply_markup=get_back_keyboard(),
+            )
+        context.user_data.pop("waiting_deposit_amount", None)
+        return await send_vietqr_deposit_card(update.effective_chat.id, user, context, amount)
+
     if context.user_data.get("waiting_approve_amount") or context.bot_data.get("pending_deposit_approvals", {}).get(str(uid)):
         return await handle_approve_amount(update, context)
 
     if context.user_data.get("waiting_freekey_photo"):
         return await update.message.reply_text(
             f"{E_ALERT} Gửi ảnh chứng minh rải <code>{FREE_KEY_BOT}</code> tối thiểu 3 box để duyệt.",
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard(),
+            parse_mode="HTML", reply_markup=get_back_keyboard(),
         )
 
     if context.user_data.get("waiting_sub_admin"):
@@ -2187,8 +2437,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if target_id == int(ADMIN_ID):
                 return await update.message.reply_text(
                     f"{E_ALERT} ID <code>{ADMIN_ID}</code> là Chủ Bot / Admin chính.",
-                    parse_mode="HTML",
-                    reply_markup=get_admin_inline_keyboard(),
+                    parse_mode="HTML", reply_markup=get_admin_inline_keyboard(),
                 )
             sub_list = [int(x) for x in data.get("sub_admins", []) if int(x) != int(ADMIN_ID)]
             if target_id in sub_list:
@@ -2202,15 +2451,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_datakey(data)
                 status_text = f"{E_CHECK} Đã thêm Admin phụ ID <code>{target_id}</code>."
             return await update.message.reply_text(
-                status_text,
-                parse_mode="HTML",
-                reply_markup=get_admin_inline_keyboard(),
+                status_text, parse_mode="HTML", reply_markup=get_admin_inline_keyboard(),
             )
         except ValueError:
             return await update.message.reply_text(
                 f"{E_CROSS} ID không hợp lệ — nhập số ID Telegram.",
-                parse_mode="HTML",
-                reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
+                parse_mode="HTML", reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
             )
 
     if context.user_data.get("waiting_for_giftcode"):
@@ -2221,12 +2467,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             code = "".join(random.choices(string.ascii_uppercase + string.digits, k=12))
             data.setdefault("giftcodes", {})[code] = {
-                "amount": amount,
-                "created_at": get_hanoi_time().isoformat(),
-                "created_by": uid,
-                "used_by": None,
-                "used_at": None,
-                "is_used": False,
+                "amount": amount, "created_at": get_hanoi_time().isoformat(),
+                "created_by": uid, "used_by": None, "used_at": None, "is_used": False,
             }
             save_datakey(data)
             context.user_data["waiting_for_giftcode"] = False
@@ -2234,8 +2476,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{E_GIFT} <b>TẠO GIFTCODE THÀNH CÔNG</b> {E_PARTY}\n"
                 f"{E_MONEY} Giá trị: <code>{amount:,}đ</code>\n"
                 f"{E_PIN} Mã: <code>{code}</code>",
-                parse_mode="HTML",
-                reply_markup=get_admin_inline_keyboard(),
+                parse_mode="HTML", reply_markup=get_admin_inline_keyboard(),
             )
         except ValueError:
             await update.message.reply_text(f"{E_CROSS} Nhập số tiền hợp lệ.", parse_mode="HTML")
@@ -2245,7 +2486,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = msg.upper()
         if key in data.get("keys", {}) and not data["keys"][key].get("used"):
             kinfo = data["keys"][key]
-
             max_devices = int(kinfo.get("max_devices", 1) or 1)
             devices = kinfo.setdefault("devices", [])
             if uid_str not in devices:
@@ -2255,8 +2495,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"{E_CROSS} <b>KEY ĐÃ ĐẠT GIỚI HẠN THIẾT BỊ</b>\n"
                         f"{E_MON} Tối đa: <code>{max_devices}</code> thiết bị\n"
                         f"{E_PIN} Đã dùng: <code>{len(devices)}</code>",
-                        parse_mode="HTML",
-                        reply_markup=get_main_inline_keyboard(uid, data),
+                        parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
                     )
                 devices.append(uid_str)
 
@@ -2294,8 +2533,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{E_BANK} Mã key: <tg-spoiler>{masked_key}</tg-spoiler>\n"
                 f"{E_BELL} Hết hạn: <code>{exp.strftime('%d/%m/%Y %H:%M')}</code>\n"
                 f"{E_BOLT} Trạng thái: <b>Đã xử lí</b>",
-                button_text="Mở Bot",
-                icon_key="bolt",
+                button_text="Mở Bot", icon_key="bolt",
             )
 
             await update.message.reply_text(
@@ -2305,15 +2543,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{E_CAL} Thời hạn: <code>{duration_label}</code>\n"
                 f"{E_BELL} Hết hạn: <code>{exp.strftime('%d/%m/%Y %H:%M')}</code>\n"
                 f"{E_MON} Thiết bị: <code>{len(devices)}/{max_devices}</code> {E_FIRE}",
-                parse_mode="HTML",
-                reply_markup=get_main_inline_keyboard(uid, data),
+                parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
             )
         else:
             context.user_data["awaiting_key"] = False
             await update.message.reply_text(
                 f"{E_CROSS} <b>Key không tồn tại hoặc đã sử dụng hết slot</b>",
-                parse_mode="HTML",
-                reply_markup=get_main_inline_keyboard(uid, data),
+                parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
             )
         return
 
@@ -2325,17 +2561,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["waiting_giftcode_input"] = False
                 await update.message.reply_text(
                     f"{E_CROSS} <b>Giftcode đã được sử dụng</b>",
-                    parse_mode="HTML",
-                    reply_markup=get_main_inline_keyboard(uid, data),
+                    parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
                 )
             else:
                 amount = info["amount"]
                 data["users"][uid_str]["balance"] = data["users"][uid_str].get("balance", 0) + amount
-                info.update({
-                    "is_used": True,
-                    "used_by": uid_str,
-                    "used_at": get_hanoi_time().isoformat(),
-                })
+                info.update({"is_used": True, "used_by": uid_str, "used_at": get_hanoi_time().isoformat()})
                 save_datakey(data)
                 context.user_data["waiting_giftcode_input"] = False
                 await update.message.reply_text(
@@ -2343,15 +2574,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"{E_MONEY} Cộng ví: <code>+{amount:,}đ</code>\n"
                     f"{E_CASH} Số dư mới: <code>{data['users'][uid_str]['balance']:,}đ</code> {E_CROWN}",
-                    parse_mode="HTML",
-                    reply_markup=get_main_inline_keyboard(uid, data),
+                    parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
                 )
         else:
             context.user_data["waiting_giftcode_input"] = False
             await update.message.reply_text(
                 f"{E_CROSS} <b>Giftcode không hợp lệ</b>",
-                parse_mode="HTML",
-                reply_markup=get_main_inline_keyboard(uid, data),
+                parse_mode="HTML", reply_markup=get_main_inline_keyboard(uid, data),
             )
         return
 
@@ -2363,7 +2592,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     if context.user_data.get("waiting_create_key"):
-        # *cú pháp nhập: "<số> <m|h|d> [số_thiết_bị]"*
         parts = msg.split()
         if len(parts) < 2:
             return await update.message.reply_text(
@@ -2405,14 +2633,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         key = "".join(random.choices(string.ascii_uppercase + string.digits, k=15))
         rec = {
-            "used": False,
-            "created_at": get_hanoi_time().isoformat(),
-            "used_by": None,
-            "max_devices": max_devices,
-            "devices": [],
-            "minutes": 0,
-            "hours": 0,
-            "days": 0,
+            "used": False, "created_at": get_hanoi_time().isoformat(), "used_by": None,
+            "max_devices": max_devices, "devices": [], "minutes": 0, "hours": 0, "days": 0,
         }
         if unit == "m":
             rec["minutes"] = val
@@ -2428,8 +2650,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{E_PIN} Key: <code>{key}</code>\n"
             f"{E_CAL} Thời hạn: <code>{duration_label}</code>\n"
             f"{E_MON} Thiết bị tối đa: <code>{max_devices}</code>",
-            parse_mode="HTML",
-            reply_markup=get_admin_inline_keyboard(),
+            parse_mode="HTML", reply_markup=get_admin_inline_keyboard(),
         )
 
     if context.user_data.get("waiting_broadcast"):
@@ -2440,31 +2661,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for target in users.keys():
             try:
                 await context.bot.send_message(
-                    int(target),
-                    f"{E_MEGA} <b>THÔNG BÁO TỪ ADMIN</b> {E_FIRE}\n\n{msg}",
-                    parse_mode="HTML",
+                    int(target), f"{E_MEGA} <b>THÔNG BÁO TỪ ADMIN</b> {E_FIRE}\n\n{msg}", parse_mode="HTML",
                 )
                 sent_count += 1
                 if sent_count % 10 == 0:
                     await context.bot.edit_message_text(
-                        chat_id=update.effective_chat.id,
-                        message_id=status.message_id,
-                        text=f"{E_SPIN} Đang gửi... ({sent_count}/{len(users)})",
-                        parse_mode="HTML",
+                        chat_id=update.effective_chat.id, message_id=status.message_id,
+                        text=f"{E_SPIN} Đang gửi... ({sent_count}/{len(users)})", parse_mode="HTML",
                     )
                 await asyncio.sleep(0.08)
             except Exception:
                 failed += 1
         await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=status.message_id,
+            chat_id=update.effective_chat.id, message_id=status.message_id,
             text=(
                 f"{E_PARTY} <b>Broadcast hoàn tất</b> {E_CHECK}\n"
                 f"{E_CHECK} Thành công: <code>{sent_count}</code>\n"
                 f"{E_CROSS} Thất bại: <code>{failed}</code>"
             ),
-            parse_mode="HTML",
-            reply_markup=get_admin_inline_keyboard(),
+            parse_mode="HTML", reply_markup=get_admin_inline_keyboard(),
         )
         return
 
@@ -2488,10 +2703,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         u["verified_3box"] = True
         save_datakey(data)
         await q.answer(f"Xác nhận thành công ({checked_count}/3 box)!", show_alert=False)
-        return await q.edit_message_text(
-            build_main_header(user, u, data),
-            parse_mode="HTML",
-            reply_markup=get_main_inline_keyboard(user.id, data),
+        return await safe_edit_or_send(
+            q, build_main_header(user, u, data), reply_markup=get_main_inline_keyboard(user.id, data),
         )
 
     await q.answer()
@@ -2504,10 +2717,10 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         stop_auto_session(user.id, target_api)
         g_name = GAME_MAP_NAME.get(target_api, target_api.upper())
         w50, l50, t50 = get_50_window_stats(target_api, data)
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_CROSS} <b>ĐÃ TẮT AUTO BÀN {g_name}</b> {E_GAME}\n"
             f"{E_MON} Thống kê ({t50}/50 phiên): {E_WIN} <b>{w50} THẮNG</b> | {E_LOSE} <b>{l50} THUA</b>",
-            parse_mode="HTML",
             reply_markup=get_main_inline_keyboard(user.id, data),
         )
 
@@ -2525,10 +2738,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         photo_ids = context.user_data.pop("feedback_photo_ids", [])
         context.user_data.pop("waiting_feedback", None)
         if not photo_ids:
-            return await q.edit_message_text(
-                f"{E_CROSS} Không tìm thấy ảnh feedback.",
-                parse_mode="HTML",
-                reply_markup=get_main_inline_keyboard(user.id, data),
+            return await safe_edit_or_send(
+                q, f"{E_CROSS} Không tìm thấy ảnh feedback.", reply_markup=get_main_inline_keyboard(user.id, data),
             )
         admin_caption = (
             f"{E_BELL} <b>FEEDBACK {len(photo_ids)} ẢNH TỪ KHÁCH</b> {E_CROWN}\n"
@@ -2538,22 +2749,16 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             f"{E_CLIP} Nội dung: <i>(Chỉ gửi {len(photo_ids)} ảnh)</i>"
         )
         await send_photos_to_admins(context.bot, data, photo_ids, admin_caption)
-        return await q.edit_message_text(
-            f"{E_PARTY} <b>Đã gửi {len(photo_ids)} ảnh feedback tới Admin</b> {E_CHECK}",
-            parse_mode="HTML",
+        return await safe_edit_or_send(
+            q, f"{E_PARTY} <b>Đã gửi {len(photo_ids)} ảnh feedback tới Admin</b> {E_CHECK}",
             reply_markup=get_main_inline_keyboard(user.id, data),
         )
 
     for state_key in [
-        "waiting_for_giftcode",
-        "awaiting_key",
-        "waiting_giftcode_input",
-        "waiting_create_key",
-        "waiting_broadcast",
-        "waiting_feedback",
-        "feedback_photo_ids",
-        "waiting_freekey_photo",
-        "waiting_sub_admin",
+        "waiting_for_giftcode", "awaiting_key", "waiting_giftcode_input",
+        "waiting_create_key", "waiting_broadcast", "waiting_feedback",
+        "feedback_photo_ids", "waiting_freekey_photo", "waiting_sub_admin",
+        "waiting_deposit_amount",
     ]:
         context.user_data.pop(state_key, None)
 
@@ -2562,70 +2767,71 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         if len(parts) != 2:
             return
         action, req_id = parts
-        if action == "dep_sent":
-            return await handle_deposit_callback(update, context, "sent", req_id)
-        if action == "dep_cancel":
-            return await handle_deposit_callback(update, context, "cancel", req_id)
+        if action == "dep_done":
+            return await handle_deposit_callback(update, context, "done", req_id)
         if action == "dep_ok":
             return await handle_admin_deposit_callback(update, context, "ok", req_id)
         if action == "dep_no":
             return await handle_admin_deposit_callback(update, context, "no", req_id)
         return
 
+    if data_tag == "user_checkgame":
+        await safe_edit_or_send(q, f"{E_SPIN} <b>ĐANG QUÉT DỮ LIỆU 50 PHIÊN TOÀN BỘ GAME...</b> {E_FIRE}")
+        report_text = await build_check_game_report()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Làm Mới Check Game", callback_data="user_checkgame", api_kwargs=btn_icon("fire"))],
+            [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
+        ])
+        return await safe_edit_or_send(q, report_text, reply_markup=kb)
+
     if data_tag == "menu_freekey":
         allowed, next_dt = can_claim_free_key(uid, data)
         if not allowed:
-            return await q.edit_message_text(
+            return await safe_edit_or_send(
+                q,
                 f"{E_CROSS} <b>ĐÃ NHẬN KEY FREE 30P HÔM NAY</b> {E_ALERT}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{E_BELL} Lượt kế: <code>{next_dt.strftime('%d/%m/%Y %H:%M')}</code>",
-                parse_mode="HTML",
                 reply_markup=get_back_keyboard(),
             )
         context.user_data["waiting_freekey_photo"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_GIFT} <b>GET KEY FREE 30 PHÚT</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_FIRE} 1. Rải nội dung có <code>{FREE_KEY_BOT}</code> vào tối thiểu <b>3 box</b>.\n"
             f"{E_CLIP} 2. Gửi ảnh chứng minh ngay tại đây.\n"
             f"{E_CHECK} 3. Admin duyệt xong bot gửi thẳng <b>Key 30p</b> cho bạn.\n"
             f"{E_PIN} Mẫu: <code>Tool soi cầu real-time miễn phí tại {FREE_KEY_BOT}</code>",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard(),
         )
 
     if data_tag == "menu_back":
         stop_auto_session(user.id)
-        return await q.edit_message_text(
-            build_main_header(user, u, data),
-            parse_mode="HTML",
-            reply_markup=get_main_inline_keyboard(user.id, data),
+        return await safe_edit_or_send(
+            q, build_main_header(user, u, data), reply_markup=get_main_inline_keyboard(user.id, data),
         )
 
     if data_tag == "menu_games":
         stop_auto_session(user.id)
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_GAME} <b>CHỌN GAME ĐỂ SOI CẦU</b> {E_FIRE}\n"
             f"{E_BELL} <i>Chọn cổng game có API real-time bên dưới.</i>",
-            parse_mode="HTML",
             reply_markup=get_game_inline_keyboard(),
         )
 
     if data_tag.startswith("game_"):
         game = data_tag.split("_")[1]
         game_icons = {
-            "SUNWIN": E_SUNWIN,
-            "HITCLUB": E_HITCLUB,
-            "B52": E_B52,
-            "BETVIP": E_BETVIP,
-            "LC79": E_LC79,
-            "XD88": E_XD88,
+            "SUNWIN": E_SUNWIN, "HITCLUB": E_HITCLUB, "B52": E_B52, "BETVIP": E_BETVIP,
+            "LC79": E_LC79, "XD88": E_XD88, "GAME68": E_GAME68, "MAX789": E_MAX789,
         }
         g_icon = game_icons.get(game, E_GAME)
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{g_icon} <b>CHỌN BÀN CHƠI {game}</b> {E_TABLE_TX}\n"
             f"{E_GAME} <i>Chọn bàn để tự động chạy soi cầu từng phiên.</i>",
-            parse_mode="HTML",
             reply_markup=get_sub_inline_keyboard(game),
         )
 
@@ -2653,7 +2859,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             f"{E_MONEY} <b>Số dư ví:</b> <code>{u.get('balance', 0):,}đ</code> {E_CASH}\n"
             f"{exp_line}"
         )
-        return await q.edit_message_text(msg, parse_mode="HTML", reply_markup=get_back_keyboard())
+        return await safe_edit_or_send(q, msg, reply_markup=get_back_keyboard())
 
     if data_tag == "menu_buykey":
         kb = [
@@ -2663,7 +2869,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("Gói 1 Tháng — 130,000đ", callback_data="buy_30d", api_kwargs=btn_icon("crown"))],
             [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
         ]
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_BAG} <b>BẢNG GIÁ GÓI KEY VIP</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_MONEY} Số dư ví: <code>{u.get('balance', 0):,}đ</code> {E_CASH}\n"
@@ -2671,7 +2878,6 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             f"{E_FIRE} <b>3 Ngày:</b> <code>70,000đ</code>\n"
             f"{E_BAG} <b>7 Ngày:</b> <code>90,000đ</code>\n"
             f"{E_CROWN} <b>1 Tháng:</b> <code>130,000đ</code>",
-            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(kb),
         )
 
@@ -2689,22 +2895,13 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             key = "".join(random.choices(string.ascii_uppercase + string.digits, k=15))
             now = get_hanoi_time()
             data_fresh.setdefault("keys", {})[key] = {
-                "days": p["days"],
-                "hours": 0,
-                "minutes": 0,
-                "used": False,
-                "created_at": now.isoformat(),
-                "used_by": None,
-                "bought_by": uid,
-                "max_devices": 1,
-                "devices": [],
+                "days": p["days"], "hours": 0, "minutes": 0,
+                "used": False, "created_at": now.isoformat(), "used_by": None,
+                "bought_by": uid, "max_devices": 1, "devices": [],
             }
             data_fresh.setdefault("history", []).append({
-                "user_id": uid,
-                "package": p["name"],
-                "price": p["price"],
-                "key": key,
-                "time": now.isoformat(),
+                "user_id": uid, "package": p["name"], "price": p["price"],
+                "key": key, "time": now.isoformat(),
             })
             save_datakey(data_fresh)
 
@@ -2719,49 +2916,52 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             f"{E_BELL} Mã key: <tg-spoiler>{masked_key}</tg-spoiler>\n"
             f"{E_CLOVER} Thời gian: <code>{now.strftime('%d/%m/%Y %H:%M:%S')}</code>\n"
             f"{E_BOLT} Trạng thái: <b>Đã thanh toán</b>",
-            button_text="Mở Bot",
-            icon_key="cart",
+            button_text="Mở Bot", icon_key="cart",
         )
 
         kb = [
             [InlineKeyboardButton("Kích Hoạt Key Ngay", callback_data="menu_activate", api_kwargs=btn_icon("crown"))],
             [InlineKeyboardButton("Quay Lại", callback_data="menu_back", api_kwargs=btn_icon("down"))],
         ]
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_PARTY} <b>MUA KEY VIP THÀNH CÔNG</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_BAG} Gói: <b>{p['name']}</b> — <code>{p['price']:,}đ</code>\n"
             f"{E_PIN} Mã KEY: <code>{key}</code>\n"
             f"{E_MONEY} Số dư còn lại: <code>{u_fresh['balance']:,}đ</code> {E_CASH}\n"
             f"{E_FIRE} Chúc bạn chơi tốt và thắng lớn, vui vẻ cùng tool.",
-            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(kb),
         )
 
     if data_tag == "menu_activate":
         context.user_data["awaiting_key"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_CROWN} <b>KÍCH HOẠT KEY VIP</b> {E_FIRE}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_GIFT} Nhập hoặc dán <b>MÃ KEY (15 ký tự)</b> vào khung chat:",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard(),
         )
 
     if data_tag == "menu_deposit":
-        try:
-            await q.message.delete()
-        except Exception:
-            pass
-        return await open_deposit(q.message.chat_id, user, context)
+        context.user_data["waiting_deposit_amount"] = True
+        return await safe_edit_or_send(
+            q,
+            f"{E_MONEY} <b>NẠP TIỀN VÍ QUA VIETQR</b> {E_CASH}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{E_PIN} Nhập <b>số tiền</b> bạn muốn nạp (VD: <code>30000</code>):\n"
+            f"{E_CHECK} Bot sẽ tạo mã QR đúng STK, số tiền & nội dung cho bạn quét.",
+            reply_markup=get_back_keyboard(),
+        )
 
     if data_tag == "menu_giftcode":
         context.user_data["waiting_giftcode_input"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_GIFT} <b>NHẬP GIFTCODE NHẬN TIỀN</b> {E_PARTY}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_PIN} Dán mã giftcode vào khung chat bên dưới:",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard(),
         )
 
@@ -2769,11 +2969,11 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         history = data.get("history", [])
         my_history = [h for h in history if str(h.get("user_id")) == uid]
         if not my_history:
-            return await q.edit_message_text(
+            return await safe_edit_or_send(
+                q,
                 f"{E_CAL} <b>LỊCH SỬ MUA KEY</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{E_SPIN} Bạn chưa mua gói key nào.",
-                parse_mode="HTML",
                 reply_markup=get_back_keyboard(),
             )
         lines = [f"{E_CAL} <b>LỊCH SỬ MUA KEY (10 gần nhất)</b>", "━━━━━━━━━━━━━━━━━━━━"]
@@ -2784,68 +2984,61 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"{E_CHECK} <b>{h.get('package', '?')}</b> — <code>{h.get('price', 0):,}đ</code>\n"
                 f"   {E_PIN} <code>{h.get('key', '?')}</code> | {t_str}"
             )
-        return await q.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=get_back_keyboard())
+        return await safe_edit_or_send(q, "\n".join(lines), reply_markup=get_back_keyboard())
 
     if data_tag == "menu_support":
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_NET} <b>HỖ TRỢ KHÁCH HÀNG</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_BELL} Kênh thông báo: {CHANNEL_THONG_BAO}\n"
             f"{E_MEGA} Nhóm chat: {CHANNEL_CHAT}\n"
             f"{E_CASH} Kênh check bill: {CHANNEL_BILL}\n"
             f"{E_CROWN} Admin hỗ trợ: {ADMIN_HANDLE}",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard(),
         )
 
     if data_tag == "menu_feedback":
         context.user_data["waiting_feedback"] = True
         context.user_data["feedback_photo_ids"] = []
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_BELL} <b>GỬI FEEDBACK CHO ADMIN</b> {E_CROWN}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_CLIP} Gửi ảnh và/hoặc nhập nội dung mô tả vấn đề.\n"
             f"{E_CHECK} Xong bấm nút gửi để chuyển tới Admin.",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard(),
         )
 
     if data_tag == "admin_tools":
         if not is_admin(user.id, data):
             return
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_GEAR} <b>ADMIN TOOLS QUẢN TRỊ</b> {E_CROWN}\n"
             f"{E_BELL} <i>Chọn chức năng bên dưới.</i>",
-            parse_mode="HTML",
             reply_markup=get_admin_inline_keyboard(),
         )
 
     if data_tag == "admin_checkgame":
         if not is_admin(user.id, data):
             return
-        await q.edit_message_text(
-            f"{E_SPIN} <b>ĐANG QUÉT DỮ LIỆU 50 PHIÊN TOÀN BỘ GAME...</b> {E_FIRE}",
-            parse_mode="HTML",
-        )
+        await safe_edit_or_send(q, f"{E_SPIN} <b>ĐANG QUÉT DỮ LIỆU 50 PHIÊN TOÀN BỘ GAME...</b> {E_FIRE}")
         report_text = await build_check_game_report()
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Làm Mới Check Game", callback_data="admin_checkgame", api_kwargs=btn_icon("fire"))],
             [InlineKeyboardButton("Quay Lại Admin", callback_data="admin_tools", api_kwargs=btn_icon("down"))],
         ])
-        return await q.edit_message_text(
-            report_text,
-            parse_mode="HTML",
-            reply_markup=kb,
-        )
+        return await safe_edit_or_send(q, report_text, reply_markup=kb)
 
     if data_tag == "admin_giftcode":
         if not is_admin(user.id, data):
             return
         context.user_data["waiting_for_giftcode"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_GIFT} <b>TẠO GIFTCODE</b> {E_CROWN}\n"
             f"{E_PIN} Nhập số tiền giftcode vào khung chat:",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
@@ -2853,34 +3046,32 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         if not is_admin(user.id, data):
             return
         context.user_data["waiting_create_key"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_CROWN} <b>TẠO KEY VIP</b> {E_FIRE}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{E_PIN} Nhập theo cú pháp: <code>&lt;số&gt; &lt;m|h|d&gt; [số_thiết_bị]</code>\n"
             f"{E_CAL} VD: <code>30 m</code> (30 phút, 1 thiết bị)\n"
             f"        <code>1 h 3</code> (1 giờ, 3 thiết bị)\n"
             f"        <code>3 d 2</code> (3 ngày, 2 thiết bị)",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
     if data_tag == "admin_stats":
         if not is_admin(user.id, data):
             return
-        return await q.edit_message_text(
-            build_stats_text(data),
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
+        return await safe_edit_or_send(
+            q, build_stats_text(data), reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
     if data_tag == "admin_broadcast":
         if not is_admin(user.id, data):
             return
         context.user_data["waiting_broadcast"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_MEGA} <b>BROADCAST TOÀN BỘ USER</b> {E_FIRE}\n"
             f"{E_PIN} Nhập nội dung tin nhắn vào khung chat:",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
@@ -2888,10 +3079,10 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         if not is_admin(user.id, data):
             return
         context.user_data["waiting_sub_admin"] = True
-        return await q.edit_message_text(
+        return await safe_edit_or_send(
+            q,
             f"{E_GEAR} <b>THÊM / XÓA ADMIN PHỤ</b> {E_CROWN}\n"
             f"{E_PIN} Nhập ID Telegram cần thêm hoặc xóa:",
-            parse_mode="HTML",
             reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
@@ -2905,10 +3096,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
                 continue
             active = "✅" if is_key_active(v, None, data) else "❌"
             lines.append(f"{i}. {active} <code>{k}</code> — {v.get('first_name', 'N/A')}")
-        return await q.edit_message_text(
-            "\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
+        return await safe_edit_or_send(
+            q, "\n".join(lines), reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
     if data_tag == "admin_deposits":
@@ -2919,18 +3108,15 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             if r.get("status") in ("pending", "awaiting_admin")
         ]
         if not pending:
-            return await q.edit_message_text(
-                f"{E_CHECK} <b>Không có đơn nạp chờ duyệt</b>",
-                parse_mode="HTML",
+            return await safe_edit_or_send(
+                q, f"{E_CHECK} <b>Không có đơn nạp chờ duyệt</b>",
                 reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
             )
         lines = [f"{E_MONEY} <b>ĐƠN NẠP CHỜ DUYỆT ({len(pending)})</b>", "━━━━━━━━━━━━━━━━━━━━"]
         for k, r in pending[-20:]:
             lines.append(f"#{k} — <code>{r['user_id']}</code> ({r.get('status')})")
-        return await q.edit_message_text(
-            "\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
+        return await safe_edit_or_send(
+            q, "\n".join(lines), reply_markup=get_back_keyboard("admin_tools", "Quay Lại Admin"),
         )
 
     if data_tag.startswith("run_"):
@@ -2938,48 +3124,55 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         if api_key not in API_URLS:
             return
         if not is_key_active(u, user.id, data):
-            return await q.edit_message_text(
+            return await safe_edit_or_send(
+                q,
                 f"{E_CROSS} <b>BẠN CHƯA CÓ KEY VIP HOẶC ĐÃ HẾT HẠN</b>\n"
                 f"{E_BAG} Mua gói key để dùng tính năng soi cầu auto.",
-                parse_mode="HTML",
                 reply_markup=get_back_keyboard("menu_buykey", "Mua Key VIP"),
             )
 
         stop_auto_session(user.id, api_key)
         s_key = _session_key(user.id, api_key)
         w50, l50, t50 = get_50_window_stats(api_key, data)
-        placeholder = await q.edit_message_text(
+        placeholder = await safe_edit_or_send(
+            q,
             f"{E_SPIN} <b>ĐANG KHỞI TẠO AUTO...</b> {E_GAME}\n"
             f"{E_BELL} Bàn: <b>{GAME_MAP_NAME.get(api_key, api_key.upper())}</b>",
-            parse_mode="HTML",
         )
+        if not placeholder:
+            return
         AUTO_SESSIONS[s_key] = {
-            "task": None,
-            "win": w50,
-            "lose": l50,
-            "total_50": t50,
-            "active_session": None,
-            "active_pred": None,
-            "baseline_kq_for_active": None,
-            "last_pred_sig": None,
+            "task": None, "win": w50, "lose": l50, "total_50": t50,
+            "active_session": None, "active_pred": None,
+            "baseline_kq_for_active": None, "last_pred_sig": None, "last_status_text": None,
         }
         task = asyncio.create_task(
-            _auto_loop_worker(
-                context.bot,
-                placeholder.chat_id,
-                placeholder.message_id,
-                user.id,
-                api_key,
-            )
+            _auto_loop_worker(context.bot, placeholder.chat_id, placeholder.message_id, user.id, api_key)
         )
         AUTO_SESSIONS[s_key]["task"] = task
         return
 
 
+async def post_init(app):
+    app.bot_data["bank_poller_task"] = asyncio.create_task(apibank_auto_verify_worker(app.bot))
+
+
+async def post_shutdown(app):
+    task = app.bot_data.get("bank_poller_task")
+    if task and not task.done():
+        task.cancel()
+
+
 def main():
     init_datakey_file()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("key", handle_key_command))
