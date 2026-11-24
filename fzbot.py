@@ -3217,11 +3217,11 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("key", handle_key_command))
-    app.add_handler(CommandHandler("approve", handle_approve_command))
-    app.add_handler(CommandHandler("broadcast", handle_broadcast_command))
-    app.add_handler(CommandHandler("stats", handle_stats_command))
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("key", handle_key_command, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("approve", handle_approve_command, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("broadcast", handle_broadcast_command, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("stats", handle_stats_command, filters=filters.ChatType.PRIVATE))
 
     app.add_handler(CallbackQueryHandler(callback_query_handler))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, handle_photo))
