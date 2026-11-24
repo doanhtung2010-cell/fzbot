@@ -1,4 +1,3 @@
-# language: Python, file: fzbot_checkbank_fix.py, target: Python 3.10+ / python-telegram-bot v20+
 import logging
 import asyncio
 import httpx
@@ -80,10 +79,12 @@ CHECKBILL_CHAT_ID = None
 ADMIN_HANDLE = "@tungocbo"
 FREE_KEY_BOT = "@fztooltxfree_bot"
 
+GROUP_CHAT_ID = -1003979274498
+
 REQUIRED_BOXES = [
-    {"name": "Kênh Thông Báo FZ Team", "url": CHANNEL_THONG_BAO, "chat_id": None},
-    {"name": "Nhóm Chat FZ Team", "url": CHANNEL_CHAT, "chat_id": None},
-    {"name": "Kênh Check Bill FZ Team", "url": CHANNEL_BILL, "chat_id": None},
+    {"name": "Kênh Thông Báo FZ Team", "url": CHANNEL_THONG_BAO, "chat_id": None, "require_admin_check": True},
+    {"name": "Nhóm Chat FZ Team", "url": CHANNEL_CHAT, "chat_id": GROUP_CHAT_ID, "require_admin_check": False},
+    {"name": "Kênh Check Bill FZ Team", "url": CHANNEL_BILL, "chat_id": None, "require_admin_check": True},
 ]
 
 # Danh sách API game
@@ -748,17 +749,53 @@ def _extract_chat_target(box):
 async def check_3box_membership(bot, user_id):
     checked_count = 0
     for idx, box in enumerate(REQUIRED_BOXES, 1):
-        target = _extract_chat_target(box)
-        if not target:
-            return False, box["name"], f"Box #{idx} ({box['name']}) chưa điền chat_id trong REQUIRED_BOXES.", checked_count
-        try:
-            member = await bot.get_chat_member(chat_id=target, user_id=int(user_id))
-            if member.status in ("left", "kicked"):
-                return False, box["name"], None, checked_count
-            checked_count += 1
-        except Exception as e:
-            logging.warning("get_chat_member failed for %s (%s): %s", box["name"], target, e)
-            return False, box["name"], f"Không kiểm tra được {box['name']} ({target}). Hãy kiểm tra bot đã vào box đó chưa.", checked_count
+        candidates = []
+        cid = box.get("chat_id")
+        if cid not in (None, "", 0):
+            candidates.append(cid)
+
+        url = (box.get("url") or "").strip()
+        if url.startswith("https://t.me/") and "/+" not in url and "/c/" not in url:
+            handle = url.split("https://t.me/", 1)[1].strip("/").split("/")[0]
+            if handle and not handle.startswith("joinchat"):
+                uname = f"@{handle}"
+                if uname not in candidates:
+                    candidates.append(uname)
+
+        if not candidates:
+            return (
+                False,
+                box["name"],
+                f"Box #{idx} ({box['name']}) chưa có chat_id hoặc link hợp lệ.",
+                checked_count,
+            )
+
+        member = None
+        last_err = None
+        for target in candidates:
+            try:
+                member = await bot.get_chat_member(chat_id=target, user_id=int(user_id))
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                continue
+
+        if last_err is not None or member is None:
+            logging.warning("get_chat_member failed for %s (%s): %s", box["name"], candidates, last_err)
+            if not box.get("require_admin_check", True):
+                checked_count += 1
+                continue
+            return (
+                False,
+                box["name"],
+                f"Không kiểm tra được {box['name']} ({candidates[-1]}). Hãy thêm bot làm Admin vào box đó.",
+                checked_count,
+            )
+
+        if member.status in ("left", "kicked"):
+            return False, box["name"], None, checked_count
+        checked_count += 1
     return True, None, None, checked_count
 
 
@@ -1085,6 +1122,8 @@ async def _auto_loop_worker(bot, chat_id, message_id, user_id, api_key):
 
 # --- START COMMAND ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat and update.effective_chat.type != "private":
+        return
     context.user_data.clear()
     user = update.effective_user
     stop_auto_session(user.id)
@@ -2324,6 +2363,8 @@ def _schedule_album_debounce(context, chat_id, user, uid_str, group_key, mode):
 
 # --- HANDLE PHOTO MESSAGE ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat and update.effective_chat.type != "private":
+        return
     user = update.effective_user
     data = load_datakey()
     uid = ensure_user(data, user)
@@ -2396,6 +2437,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- HANDLE TEXT INPUT ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat and update.effective_chat.type != "private":
+        return
     msg = update.message.text.strip()
     user = update.effective_user
     uid = user.id
@@ -3181,8 +3224,8 @@ def main():
     app.add_handler(CommandHandler("stats", handle_stats_command))
 
     app.add_handler(CallbackQueryHandler(callback_query_handler))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Bot starting...")
     app.run_polling(drop_pending_updates=True)
